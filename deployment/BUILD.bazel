@@ -1,0 +1,34 @@
+###############################################################################
+# deployment/BUILD.bazel — Docker / OCI Image Build Rules
+#
+# We use rules_oci (declared in MODULE.bazel) to build Docker images as Bazel
+# targets. This integrates image building into the same hermetic dependency
+# graph as our C++ and Python code.
+#
+# Key advantage over raw `docker build`:
+#   - Image layers are cached at the Bazel level (content-addressed by hash).
+#   - `bazel run //deployment:push_dev_image` builds AND pushes atomically.
+#   - You can `bazel test //deployment:dev_image_test` to validate image contents.
+#   - The image digest is tracked in Bazel's lockfile — reproducible forever.
+#
+# Sprint 1 Status: Structure only. The actual oci_image targets are added in
+# Sprint 1, Task 3 once we have ROS 2 packages building under Bazel.
+###############################################################################
+
+package(default_visibility = ["//visibility:public"])
+
+# ─── OCI Targets (Sprint 1, Task 3) ──────────────────────────────────────────
+# rules_oci load statements and oci_image / oci_tarball targets are added here
+# once we have ROS 2 perception packages building under Bazel.
+#
+# Example (coming in Task 3):
+#   load("@rules_oci//oci:defs.bzl", "oci_image", "oci_push")
+#   load("@rules_oci//oci:tarball.bzl", "oci_tarball")
+#
+#   oci_image(
+#       name = "dev_image",
+#       base = "@ros2_jazzy_base",
+#       tars = ["//perception:perception_layer"],
+#       entrypoint = ["/entrypoint.sh"],
+#       env = {"ROS_DOMAIN_ID": "42"},
+#   )

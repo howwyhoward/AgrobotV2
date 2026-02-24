@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.7
+###############################################################################
+# Dockerfile.cuda — HPC Deployment (NYU Greene A100 / L4)
+#
+# Target platform : linux/amd64
+# Base            : nvidia/cuda:12.4.1-cudnn9-devel-ubuntu24.04
+# Purpose         : Training and inference on NVIDIA A100 (sm_80) and L4 (sm_89).
+#
+# NOTE: This file is NOT built on your Mac (arm64 QEMU emulation is too slow
+# for CUDA workloads). It is built and run on the HPC.
+#
+# Build (run on Greene HPC, NOT your Mac):
+#   docker build \
+#     --file deployment/docker/Dockerfile.cuda \
+#     --tag agrobot-tom-v2/cuda:latest \
+#     .
+###############################################################################
+
+# ─── Stage 1: CUDA Base + ROS 2 ──────────────────────────────────────────────
+# We start from NVIDIA's official CUDA image (Ubuntu 24.04 base) and manually
+# install ROS 2 Jazzy. The official osrf/ros:jazzy image uses Ubuntu 24.04 too,
+# but it doesn't have CUDA drivers. We go the other direction: start with CUDA,
+# add ROS 2 on top.
+FROM nvidia/cuda:12.4.1-cudnn9-devel-ubuntu24.04 AS system
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Install ROS 2 Jazzy (Ubuntu 24.04 Noble) ──────────────────────────────────
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    lsb-release \
+    software-properties-common && \
+    # Add ROS 2 apt repository
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+        http://packages.ros.org/ros2/ubuntu noble main" \
+        > /etc/apt/sources.list.d/ros2.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-ros-base \
+    ros-jazzy-cv-bridge \
+    ros-jazzy-image-transport \
+    python3-pip \
+    python3-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Stage 2: Python + PyTorch (CUDA) ────────────────────────────────────────
+FROM system AS python-deps
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
+    # PyTorch with CUDA 12.4 support
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 && \
+    pip3 install --break-system-packages \
+    numpy \
+    opencv-python-headless \
+    pyyaml \
+    onnxruntime-gpu
+
+# ─── Stage 3: Final CUDA Image ────────────────────────────────────────────────
+FROM python-deps AS cuda
+
+WORKDIR /workspace
+RUN mkdir -p /ros2_ws/src
+
+ENV ROS_DOMAIN_ID=42
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
+
+COPY deployment/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

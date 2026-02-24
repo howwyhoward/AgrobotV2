@@ -1,0 +1,30 @@
+# .dockerignore — Exclude files from Docker build context
+#
+# The "build context" is the directory tree sent to the Docker daemon when
+# you run `docker build`. A large context = slow builds. This file prunes it.
+#
+# Rule of thumb: exclude everything you don't explicitly COPY in a Dockerfile.
+
+# Bazel artifacts (can be hundreds of MB)
+bazel-*
+.bazel/
+~/.cache/bazel/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# Editor
+.idea/
+.vscode/
+**/*.swp
+**/.DS_Store
+
+# Build event logs
+/tmp/agrobot_bep.json

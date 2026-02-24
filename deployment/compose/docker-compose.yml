@@ -1,0 +1,110 @@
+###############################################################################
+# docker-compose.yml — Local Development Orchestration
+#
+# This file defines the services for your local dev workflow on Mac M2.
+# It is NOT used on HPC or AMD edge (those environments use standalone docker).
+#
+# Usage (run from AgrobotV2 root on your Mac):
+#   docker compose -f deployment/compose/docker-compose.yml up dev         ← start dev shell
+#   docker compose -f deployment/compose/docker-compose.yml run dev bash   ← interactive bash
+#   docker compose -f deployment/compose/docker-compose.yml down           ← stop all services
+#
+# The `COMPOSE_PROJECT_NAME` env var prefixes all container/volume names
+# to avoid collisions if you run multiple projects.
+###############################################################################
+
+name: agrobot-tom-v2
+
+services:
+
+  # ─── dev: Main Development Container ───────────────────────────────────────
+  # This is your primary workspace. Think of it as a "portable Linux workstation"
+  # that has ROS 2 Jazzy pre-installed and your Mac source code mounted inside.
+  dev:
+    build:
+      context: ../..                          # Build context = AgrobotV2/ root
+      dockerfile: deployment/docker/Dockerfile.dev
+      # No `platforms:` key here — Docker Desktop on M2 auto-selects linux/arm64
+      # (the native architecture). Forcing it via BuildKit's multi-platform mode
+      # introduces a separate image resolver that has known pull issues on first run.
+      # To explicitly cross-compile for amd64 use:
+      #   docker buildx build --platform linux/amd64 -f deployment/docker/Dockerfile.dev .
+      args:
+        BUILDKIT_INLINE_CACHE: "1"
+
+    image: agrobot-tom-v2/dev:latest
+
+    # ── Volume Mounts ──────────────────────────────────────────────────────────
+    volumes:
+      # Mount your entire AgrobotV2 source tree into /workspace.
+      # Changes on your Mac are instantly visible in the container.
+      # AGROBOT_ROOT is set in the .env file at the repo root, or you can
+      # export it before running compose. Fallback uses the current directory.
+      - type: bind
+        source: ${AGROBOT_ROOT:-.}
+        target: /workspace
+
+      # Named volume for the ROS 2 colcon build artifacts.
+      # Persists across container restarts so you don't recompile everything
+      # every time you `docker compose up`.
+      - ros2_build:/ros2_ws
+
+      # Named volume for the Bazel disk cache inside the container.
+      # Speeds up `bazel build` when run inside Docker.
+      - bazel_cache:/root/.cache/bazel
+
+    # ── Environment ───────────────────────────────────────────────────────────
+    environment:
+      # ROS_DOMAIN_ID must match across all containers and physical machines
+      # that need to talk to each other over DDS.
+      ROS_DOMAIN_ID: 42
+      # PYTHONDONTWRITEBYTECODE: prevents __pycache__ from cluttering your
+      # bind-mounted source directory with container-generated .pyc files.
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      # Tell Bazel where its disk cache is.
+      BAZEL_CACHE_DIR: /root/.cache/bazel
+
+    # ── Networking ────────────────────────────────────────────────────────────
+    # We use host networking so ROS 2 DDS multicast works without additional
+    # configuration. On a Mac, Docker Desktop emulates host networking — this
+    # is fine for development. On Linux HPC it gives true host network access.
+    #
+    # Alternative: use a bridge network + manually configure DDS peers.
+    # We'll revisit this in Sprint 4 (HIL testing with Tailscale).
+    network_mode: host
+
+    # ── Runtime ───────────────────────────────────────────────────────────────
+    # Keep container running so you can `docker exec` into it.
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+    # ── Resource Limits ───────────────────────────────────────────────────────
+    # Prevent the container from consuming all of your M2's RAM during builds.
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 2G
+
+  # ─── ros-bridge: rosbridge_suite for web visualization (optional) ───────────
+  # Sprint 4 adds Foxglove Studio integration via rosbridge_websocket.
+  # Placeholder here so we remember to wire it up.
+  #
+  # ros-bridge:
+  #   image: agrobot-tom-v2/dev:latest
+  #   command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+  #   ports:
+  #     - "9090:9090"
+  #   network_mode: host
+  #   depends_on:
+  #     - dev
+
+# ─── Named Volumes ─────────────────────────────────────────────────────────────
+volumes:
+  ros2_build:
+    driver: local
+  bazel_cache:
+    driver: local

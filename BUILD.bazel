@@ -1,0 +1,24 @@
+###############################################################################
+# BUILD.bazel — Root Build File
+#
+# This is the top-level BUILD file for the Agrobot monorepo.
+# It defines repo-wide targets: pip dependency management and linting.
+###############################################################################
+
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+# ─── Pip Lock File Management ─────────────────────────────────────────────────
+#
+# This target lets you regenerate the locked requirements file.
+# Run on your Mac: `bazel run //:requirements.update`
+#
+# How it works:
+#   1. Reads `requirements.in` (your high-level, unpinned deps like `torch>=2.0`)
+#   2. Resolves the full dependency tree with exact versions + hashes
+#   3. Writes the result to `requirements_lock.txt`
+#   4. Future `bazel build` commands use the lock file — never the unpinned one.
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements_lock.txt",
+)

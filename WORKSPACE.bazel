@@ -1,0 +1,11 @@
+###############################################################################
+# WORKSPACE.bazel — Legacy shim required for compatibility
+#
+# In modern Bazel (v6+), MODULE.bazel (Bzlmod) is the primary dependency system.
+# However, some third-party rulesets (including parts of rules_ros2) still use
+# the old WORKSPACE-based macros. This file must exist but should remain minimal.
+#
+# Rule: Do NOT add new dependencies here. All new deps go in MODULE.bazel.
+###############################################################################
+
+workspace(name = "agrobot_tom_v2")

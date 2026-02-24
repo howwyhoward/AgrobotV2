@@ -1,0 +1,35 @@
+from setuptools import find_packages, setup
+
+# setup.py is required by ament_python (ROS 2's Python build type).
+# It tells colcon how to install this package into the ROS 2 workspace overlay.
+# Bazel does NOT use this file — Bazel uses BUILD.bazel instead.
+
+package_name = "agrobot_perception"
+
+setup(
+    name=package_name,
+    version="0.1.0",
+    packages=find_packages(exclude=["test"]),
+    data_files=[
+        # Register the package with the ROS 2 ament index.
+        # Without this, `ros2 pkg list` won't find it.
+        ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
+        (f"share/{package_name}", ["package.xml"]),
+        # Install launch files so `ros2 launch agrobot_perception` works.
+        (f"share/{package_name}/launch", ["launch/perception.launch.py"]),
+    ],
+    install_requires=["setuptools"],
+    zip_safe=True,
+    maintainer="Agrobot Team",
+    maintainer_email="agrobot@example.com",
+    description="Agrobot TOM v2 perception pipeline",
+    license="MIT",
+    tests_require=["pytest"],
+    entry_points={
+        "console_scripts": [
+            # Format: "executable_name = package.module:main_function"
+            # This creates a `ros2 run agrobot_perception tomato_detector` command.
+            "tomato_detector = agrobot_perception.tomato_detector_node:main",
+        ],
+    },
+)

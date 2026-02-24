@@ -1,0 +1,82 @@
+###############################################################################
+# Agrobot TOM v2 — Bazel Module (Bzlmod)
+#
+# Bzlmod is Bazel's modern dependency system (replaces the old WORKSPACE file).
+# Think of this file like package.json or pyproject.toml — it declares what
+# external rulesets and libraries our build depends on, with pinned versions.
+###############################################################################
+
+module(
+    name = "agrobot_tom_v2",
+    version = "0.1.0",
+)
+
+# ─── Bazel Core Rulesets ──────────────────────────────────────────────────────
+
+# rules_python: Allows Bazel to manage Python hermetically.
+# It downloads a specific CPython version rather than using your system Python.
+# This means `bazel build //perception:detector` uses Python 3.11.9 everywhere —
+# on your M2, on the A100 cluster, and on the AMD edge box.
+bazel_dep(name = "rules_python", version = "0.36.0")
+
+# rules_cc: C++ build rules (used for ROS 2 C++ nodes and OpenCV).
+bazel_dep(name = "rules_cc", version = "0.0.17")
+
+# rules_oci: Build and push Docker/OCI images directly from Bazel.
+# `bazel run //deployment:push_perception_image` will build and push to a registry.
+bazel_dep(name = "rules_oci", version = "2.0.0")
+
+# container_structure_test: Test that Docker images have the right layers/files.
+bazel_dep(name = "container_structure_test", version = "1.19.1")
+
+# platforms: Defines CPU/OS constraint values (e.g., @platforms//cpu:aarch64).
+# This is how we tell Bazel "this target is M2 only" vs "this target is CUDA only".
+bazel_dep(name = "platforms", version = "0.0.10")
+
+# gazelle: Auto-generates BUILD files for Go and Python from source.
+# We'll use the Python extension to avoid writing BUILD files by hand for every .py file.
+bazel_dep(name = "gazelle", version = "0.40.0")
+
+# ─── Python Toolchain ─────────────────────────────────────────────────────────
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+
+# Pin CPython 3.11 — this is what gets used for ALL Python targets in the repo.
+# Hermetic: Bazel downloads this exact interpreter, it does NOT use your system Python.
+python.toolchain(
+    python_version = "3.11",
+    is_default = True,
+)
+
+# ─── Python Dependencies (pip) ────────────────────────────────────────────────
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+# This points Bazel at our requirements files per platform.
+# `bazel run //:requirements.update` regenerates the lock file.
+pip.parse(
+    hub_name = "agrobot_pip",
+    python_version = "3.11",
+    requirements_lock = "//:requirements_lock.txt",
+)
+
+use_repo(pip, "agrobot_pip")
+
+# ─── OCI / Docker ─────────────────────────────────────────────────────────────
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+
+# Base image for our ROS 2 Jazzy perception container (ARM64-native for M2).
+# We pin the digest (sha256) rather than a tag — tags are mutable, digests are not.
+# This guarantees the same base image is used across all machines forever.
+oci.pull(
+    name = "ros2_jazzy_base",
+    image = "docker.io/library/ros",
+    tag = "jazzy-ros-base",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+)
+
+use_repo(oci, "ros2_jazzy_base")

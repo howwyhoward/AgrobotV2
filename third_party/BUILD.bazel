@@ -1,0 +1,12 @@
+###############################################################################
+# third_party/BUILD.bazel
+#
+# Vendored external dependencies that cannot be pulled via pip or Bzlmod.
+# Examples:
+#   - SAM2 (when we need to patch the source)
+#   - Custom ONNX Runtime builds for AMD ROCm
+#
+# Sprint 2 will add SAM2 source vendoring here.
+###############################################################################
+
+package(default_visibility = ["//visibility:public"])

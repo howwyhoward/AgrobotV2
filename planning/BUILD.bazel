@@ -1,0 +1,8 @@
+###############################################################################
+# planning/BUILD.bazel
+#
+# Motion planning nodes: arm trajectory, grasp planning, path execution.
+# Sprint 4 scope.
+###############################################################################
+
+package(default_visibility = ["//visibility:public"])

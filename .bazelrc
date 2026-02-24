@@ -1,0 +1,80 @@
+###############################################################################
+# .bazelrc — Bazel Configuration File
+#
+# This file is read by Bazel before every command. Think of it as the
+# "global flags" file. Flags are grouped into named "configs" so you can
+# activate them selectively: `bazel build --config=apple_silicon //...`
+###############################################################################
+
+# ─── Common Settings (applied to ALL commands) ────────────────────────────────
+
+# Enable Bzlmod (MODULE.bazel). Required for Bazel 7.
+common --enable_bzlmod
+
+# Show the full command for each build action in verbose output.
+# Useful when debugging compiler flags or linker errors.
+build --verbose_failures
+
+# Use the local disk as a build cache.
+# Location: ~/.cache/bazel/agrobot_disk_cache
+# This means: if you've built a target before and no inputs changed,
+# Bazel retrieves the result from disk rather than rebuilding.
+build --disk_cache=~/.cache/bazel/agrobot_disk_cache
+
+# Stream build events to a local file for debugging long CI builds.
+# `bazel build --config=bep //...` writes a BuildEventProtocol stream.
+build:bep --build_event_json_file=/tmp/agrobot_bep.json
+
+# ─── Platform: Apple Silicon (M2) ─────────────────────────────────────────────
+# When you run `bazel build --config=apple_silicon //...` on your Mac,
+# these flags ensure Bazel targets the arm64 architecture.
+
+build:apple_silicon --platforms=//tools/platforms:macos_arm64
+build:apple_silicon --cpu=darwin_arm64
+
+# Enable Apple Metal (MPS) for PyTorch targets that support it.
+# This is a Bazel-level string flag our Python rules will read.
+build:apple_silicon --define=accelerator=mps
+
+# ─── Platform: NVIDIA (HPC A100 / L4) ────────────────────────────────────────
+# When SSH'd into Greene HPC, run: `bazel build --config=cuda //...`
+
+build:cuda --platforms=//tools/platforms:linux_x86_64_cuda
+build:cuda --define=accelerator=cuda
+# Tell nvcc (NVIDIA compiler) to generate PTX for Ampere (A100=sm_80) and Ada (L4=sm_89).
+build:cuda --@rules_cuda//cuda:cuda_targets=sm_80,sm_89
+
+# ─── Platform: AMD ROCm (Edge Microcomputer) ──────────────────────────────────
+# When SSH'd into the AMD edge box, run: `bazel build --config=rocm //...`
+
+build:rocm --platforms=//tools/platforms:linux_x86_64_rocm
+build:rocm --define=accelerator=rocm
+
+# ─── Remote Cache (Shared between Mac, HPC, AMD) ─────────────────────────────
+# Uncomment and fill in when you set up a remote cache server (Sprint 1, Task 4).
+# This is the single biggest speed-up: the HPC compiles a C++ node once,
+# uploads the artifact, and your Mac pulls it instead of recompiling.
+#
+# build:remote_cache --remote_cache=grpcs://your-cache-server:443
+# build:remote_cache --remote_header=x-auth-token=<TOKEN>
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+
+# Force all Python targets to use the hermetic CPython 3.11 we declared in MODULE.bazel.
+# Without this, `py_binary` rules might fall back to your system Python.
+build --@rules_python//python/config_settings:python_version=3.11
+
+# ─── Test Settings ────────────────────────────────────────────────────────────
+
+# Show test output even for passing tests (helpful during development).
+test --test_output=all
+
+# Run tests with a 60-second timeout by default.
+test --test_timeout=60
+
+# ─── C++ Toolchain ────────────────────────────────────────────────────────────
+
+# Use C++17 standard across all C++ targets.
+# Required for ROS 2 Jazzy and most modern ML C++ libraries.
+build --cxxopt=-std=c++17
+build --host_cxxopt=-std=c++17

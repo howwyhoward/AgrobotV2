@@ -1,0 +1,15 @@
+###############################################################################
+# simulation/BUILD.bazel
+#
+# Sprint 2: NVIDIA Replicator SDG (Synthetic Data Generation) scripts.
+# These run on the NYU HPC Greene cluster via Isaac Sim.
+#
+# Target example (Sprint 2):
+#   py_binary(
+#       name = "replicator_tomato_scene",
+#       srcs = ["replicator/tomato_scene.py"],
+#       target_compatible_with = ["@platforms//os:linux", "//tools/platforms:cuda"],
+#   )
+###############################################################################
+
+package(default_visibility = ["//visibility:public"])

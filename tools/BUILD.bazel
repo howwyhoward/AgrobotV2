@@ -1,0 +1,7 @@
+###############################################################################
+# tools/BUILD.bazel
+#
+# Developer tooling: formatters, linters, code generation scripts.
+###############################################################################
+
+package(default_visibility = ["//visibility:public"])

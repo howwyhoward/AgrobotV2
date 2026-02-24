@@ -1,0 +1,27 @@
+# Bazel
+bazel-*
+.bazel/
+
+# Disk cache (can be large — don't commit it)
+~/.cache/bazel/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Build Event Protocol output
+/tmp/agrobot_bep.json
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Docker Compose env (machine-specific paths — copy .env.example to .env)
+.env
+
+# OS
+.DS_Store

@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.7
+###############################################################################
+# Dockerfile.rocm — AMD Edge Deployment (96GB Microcomputer)
+#
+# Target platform : linux/amd64
+# Base            : rocm/dev-ubuntu-24.04 (ROCm 6.x, Ubuntu 24.04)
+# Purpose         : Real-time inference at the edge using AMD ROCm / MIGraphX.
+#                   This is where DINOv2, SAM2, and ROSplat run in production.
+#
+# NOTE: Built and run on the AMD edge machine directly.
+#
+# Build (run on AMD edge, NOT your Mac):
+#   docker build \
+#     --file deployment/docker/Dockerfile.rocm \
+#     --tag agrobot-tom-v2/rocm:latest \
+#     .
+###############################################################################
+
+# ROCm 6.x official image built on Ubuntu 24.04
+FROM rocm/dev-ubuntu-24.04:latest AS system
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Install ROS 2 Jazzy on ROCm Base ──────────────────────────────────────────
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    lsb-release \
+    software-properties-common && \
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+        http://packages.ros.org/ros2/ubuntu noble main" \
+        > /etc/apt/sources.list.d/ros2.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-ros-base \
+    ros-jazzy-cv-bridge \
+    ros-jazzy-image-transport \
+    python3-pip \
+    python3-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Stage 2: Python + PyTorch ROCm ──────────────────────────────────────────
+FROM system AS python-deps
+
+# PyTorch ROCm wheels are published by AMD at a separate index URL.
+# --index-url points pip at AMD's PyPI mirror for ROCm-compiled PyTorch.
+# Sprint 3 will lock this to a specific ROCm version after benchmarking.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/rocm6.2 && \
+    pip3 install --break-system-packages \
+    numpy \
+    opencv-python-headless \
+    pyyaml \
+    # ONNX Runtime with ROCm (MIGraphX backend)
+    onnxruntime
+
+# ─── Stage 3: Final ROCm Image ────────────────────────────────────────────────
+FROM python-deps AS rocm
+
+WORKDIR /workspace
+RUN mkdir -p /ros2_ws/src
+
+ENV ROS_DOMAIN_ID=42
+# Expose all AMD GPU devices to the container.
+# At runtime, add: --device=/dev/kfd --device=/dev/dri
+ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+
+RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
+
+COPY deployment/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

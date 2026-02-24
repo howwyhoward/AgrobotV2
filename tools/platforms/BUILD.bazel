@@ -1,0 +1,66 @@
+###############################################################################
+# tools/platforms/BUILD.bazel — Platform Constraint Definitions
+#
+# In Bazel, a `platform` is a named collection of constraints that describe
+# a hardware/OS target. When you run `bazel build --config=apple_silicon //...`,
+# Bazel resolves all targets against the `macos_arm64` platform below.
+#
+# This is how a single monorepo produces correct artifacts for all three of our
+# environments: M2 Mac, NVIDIA HPC, and AMD Edge — without code changes.
+###############################################################################
+
+package(default_visibility = ["//visibility:public"])
+
+# ─── Apple Silicon (Your MacBook M2) ──────────────────────────────────────────
+platform(
+    name = "macos_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+# ─── NVIDIA HPC (Greene A100 / L4) ────────────────────────────────────────────
+platform(
+    name = "linux_x86_64_cuda",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        # Custom constraint — declared below.
+        # This is what lets us write `select({"//tools/platforms:cuda": [...]})`
+        # in BUILD files to conditionally include CUDA-specific code.
+        ":cuda",
+    ],
+)
+
+# ─── AMD Edge Microcomputer (ROCm) ────────────────────────────────────────────
+platform(
+    name = "linux_x86_64_rocm",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        ":rocm",
+    ],
+)
+
+# ─── Custom Constraint: Accelerator Type ──────────────────────────────────────
+# A `constraint_setting` is like an enum TYPE (e.g., "accelerator").
+# `constraint_value`s are the enum VALUES (cuda, rocm, mps).
+# BUILD files use `select()` to branch on these at build time.
+
+constraint_setting(name = "accelerator_setting")
+
+constraint_value(
+    name = "cuda",
+    constraint_setting = ":accelerator_setting",
+)
+
+constraint_value(
+    name = "rocm",
+    constraint_setting = ":accelerator_setting",
+)
+
+constraint_value(
+    name = "mps",
+    constraint_setting = ":accelerator_setting",
+)

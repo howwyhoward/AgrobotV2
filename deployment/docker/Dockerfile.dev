@@ -1,0 +1,121 @@
+# syntax=docker/dockerfile:1.7
+###############################################################################
+# Dockerfile.dev — Local Development (Mac M2 / Apple Silicon)
+#
+# Target platform : linux/arm64
+# Base            : ros:jazzy-ros-base (Ubuntu 24.04 Noble, ARM64-native)
+# Purpose         : Fast inner-loop development. Mount your source code in,
+#                   run ROS 2 nodes, write tests. No GPU — MPS stays on the host.
+#
+# Build (Mac terminal):
+#   docker buildx build \
+#     --platform linux/arm64 \
+#     --file deployment/docker/Dockerfile.dev \
+#     --tag agrobot-tom-v2/dev:latest \
+#     --load .
+#
+# Or via docker-compose (simpler):
+#   docker compose -f deployment/compose/docker-compose.yml up dev
+###############################################################################
+
+# ─── Stage 1: System Dependencies ────────────────────────────────────────────
+# We use a named build stage ("system") so later stages can inherit from it
+# and so BuildKit can cache this stage independently of application code.
+FROM ros:jazzy-ros-base AS system
+
+# Prevent interactive apt prompts from blocking the build.
+ENV DEBIAN_FRONTEND=noninteractive
+
+# BuildKit cache mount for apt:
+#   --mount=type=cache,target=/var/cache/apt
+#   This keeps the downloaded .deb files in a persistent cache volume.
+#   Result: `apt-get update` is still run, but packages are not re-downloaded
+#   on subsequent builds unless the cache is explicitly cleared.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    # ROS 2 perception dependencies
+    ros-jazzy-cv-bridge \
+    ros-jazzy-image-transport \
+    ros-jazzy-vision-opencv \
+    ros-jazzy-rqt \
+    ros-jazzy-rqt-image-view \
+    # Python 3.12 (ships with Ubuntu 24.04 Noble)
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    # OpenCV system libraries (headless — no GUI in container)
+    libopencv-dev \
+    # Dev tools
+    git \
+    curl \
+    wget \
+    vim \
+    tmux \
+    htop \
+    # Needed for Bazel inside the container
+    openjdk-21-jdk \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Stage 2: Python Dependencies ────────────────────────────────────────────
+# Separate stage purely for pip installs.
+# This layer is only invalidated when requirements_lock.txt changes —
+# NOT when any Python source file changes.
+FROM system AS python-deps
+
+WORKDIR /tmp/pip-install
+
+# Copy ONLY the requirements files first (not the whole source tree).
+# This is the critical layer-ordering rule from the education section.
+COPY requirements.in requirements_lock.txt ./
+
+# IMPORTANT: ros:jazzy-ros-base pre-installs numpy, pyyaml, and pytest via apt
+# (Debian packages). These have no pip RECORD file, so pip cannot upgrade them.
+# Rule: never pip-install what apt already provides in a ROS base image.
+#
+# We only pip-install packages that are NOT shipped by the ROS base:
+#   - ruff: fast Python linter, not in apt
+#
+# opencv is provided by ros-jazzy-vision-opencv (apt stage above) as python3-opencv.
+# numpy, pyyaml, pytest, rclpy all come from apt as well.
+# opencv-python-headless is intentionally excluded: it pulls numpy>=2 as a dep,
+# which conflicts with the Debian-managed numpy 1.26.4 in the base image.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
+    ruff
+
+# ─── Stage 3: Final Dev Image ─────────────────────────────────────────────────
+FROM python-deps AS dev
+
+# ── Workspace Layout ──────────────────────────────────────────────────────────
+# /workspace  → bind-mounted from your Mac's AgrobotV2 directory at runtime.
+#               This means edits on your Mac are instantly visible inside the
+#               container — no rebuild needed for source code changes.
+# /ros2_ws    → the compiled ROS 2 colcon workspace (built inside the container)
+WORKDIR /workspace
+RUN mkdir -p /ros2_ws/src
+
+# ── ROS 2 Environment Setup ───────────────────────────────────────────────────
+# The ROS 2 setup script must be sourced in every new shell.
+# We bake it into /etc/bash.bashrc so it's automatic in interactive shells,
+# and into a standalone entrypoint script for non-interactive (ros2 run) usage.
+RUN echo "source /opt/ros/jazzy/setup.bash" >> /etc/bash.bashrc && \
+    echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
+
+# ── Environment Variables ─────────────────────────────────────────────────────
+# ROS_DOMAIN_ID: Isolates your ROS 2 DDS traffic from other robots/devs on the
+# same network. Any integer 0–232. We use 42 for Agrobot.
+ENV ROS_DOMAIN_ID=42
+# ROS_AUTOMATIC_DISCOVERY_RANGE replaces the deprecated ROS_LOCALHOST_ONLY in Jazzy.
+# SUBNET = discover peers on the local subnet (correct for robot + dev machine comms).
+# Use LOCALHOST if you want to isolate to this machine only during testing.
+ENV ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+# Disable color output from colcon (cleaner in Docker logs).
+ENV COLCON_LOG_LEVEL=INFO
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+COPY deployment/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

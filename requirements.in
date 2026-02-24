@@ -1,0 +1,23 @@
+# requirements.in — High-level (unpinned) Python dependencies
+#
+# DO NOT edit requirements_lock.txt by hand.
+# Edit this file, then run: `bazel run //:requirements.update`
+#
+# ─── Provided by ros:jazzy-ros-base via apt (DO NOT pip-install) ──────────────
+# These are pre-installed by the ROS base Docker image as Debian packages.
+# Pip cannot upgrade them inside the container (no RECORD file).
+# They are listed here for IDE type-checking / local venv only.
+#
+#   numpy>=1.26          (apt: python3-numpy 1.26.4)
+#   pyyaml>=6.0          (apt: python3-yaml 6.0.1)
+#   pytest>=7.4          (apt: python3-pytest 7.4.4)
+#   rclpy                (apt: ros-jazzy-rclpy)
+#   opencv-contrib       (apt: ros-jazzy-vision-opencv)
+
+# ─── Pip-only (NOT in ROS apt packages) ───────────────────────────────────────
+# These are the packages we actually install via pip inside Docker.
+#
+# opencv-python-headless is intentionally excluded here:
+#   ros-jazzy-vision-opencv (apt) already provides python3-opencv, and
+#   the pip wheel pulls numpy>=2 which conflicts with Debian's numpy 1.26.4.
+ruff>=0.4
