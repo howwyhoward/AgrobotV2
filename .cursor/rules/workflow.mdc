@@ -1,0 +1,35 @@
+---
+description: Strict engineering workflow — educate-first, step-by-step, version finalization
+alwaysApply: true
+---
+
+# Workflow Rules
+
+## 1. Educate Before You Code
+For any new tool, framework, or architecture pattern, ALWAYS lead with:
+1. **What it is** — one precise sentence
+2. **Why industry uses it** — name the naive alternative and why it falls short
+3. **How it fits here** — tie it explicitly to Agrobot TOM v2's architecture
+
+❌ BAD: Jump straight to `MODULE.bazel` without explaining what Bzlmod is.
+✅ GOOD: "Bzlmod replaces WORKSPACE because it gives us reproducible, hermetic dependency resolution — WORKSPACE's `http_archive` fetches are not pinned by default and silently drift. Here is how we use it in this repo: ..."
+
+## 2. One Step at a Time
+Propose → explain → wait for approval → implement. Never generate the next task unprompted.
+
+## 3. Agile Tracking
+Use `todo_write` to maintain the sprint task list. Mark `in_progress` before starting; mark `completed` immediately after. Never leave a task in limbo.
+
+## 4. Version Finalization — "Done" Means Three Things
+A task is complete only when it produces all three:
+
+| Part | What to Deliver |
+|------|----------------|
+| **Concept** | Why this approach? What does it replace and why is it better for this project? |
+| **Implementation** | The code or config, with patterns matching this codebase |
+| **Verification** | Exact command(s) to prove it works, labeled `[MAC]` / `[HPC]` / `[EDGE]` |
+
+A version is NOT final if:
+- The verification step is "it should work" with no runnable command
+- The code doesn't match the codebase's established patterns
+- Any `# Sprint N:` forward markers for this sprint remain unfilled

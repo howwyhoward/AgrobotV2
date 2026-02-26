@@ -1,0 +1,43 @@
+---
+description: Python code standards derived from the Agrobot TOM v2 codebase
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python Standards
+
+## Module-Level Docstring (Required on Every File)
+Every `.py` file must open with a docstring covering:
+- **Purpose** — one sentence on what this module does
+- **Target environment** — `[MAC]` / `[HPC]` / `[EDGE]`
+- **Sprint** — which sprint introduced it and any known future swap points
+
+Follow the pattern in `tomato_detector_node.py`: Architecture → Data Flow → Topics → Parameters.
+
+## Comments Explain WHY, Never WHAT
+❌ `# Convert BGR to RGB` — narrates the code  
+✅ `# cv_bridge returns BGR by convention; all ML models (DINOv2, SAM2) expect RGB` — explains the constraint
+
+## Named Constants, Never Magic Numbers
+❌ `QoSProfile(depth=1)`  
+✅ Define the profile as a named constant with a docstring explaining why those QoS values were chosen (see `SENSOR_QOS` in `tomato_detector_node.py`)
+
+## Sprint-Forward Markers
+Leave a comment at every future swap point so the next sprint has a clear target:
+```python
+# Sprint 2: replace PlaceholderDetector with DINOv2SAM2Detector
+```
+
+## Thin Node, Thick Library
+ROS 2 nodes: subscribe → preprocess → call library → publish. No business logic in nodes.
+All reusable logic lives in `utils/` modules with pure-function signatures.
+
+## Imports
+Always start with `from __future__ import annotations`. Group: stdlib → third-party → ROS → local.
+
+## Type Aliases
+Use named aliases for numpy arrays to convey semantic meaning:
+```python
+BGRImage = np.ndarray  # OpenCV / cv_bridge convention
+RGBImage = np.ndarray  # ML model input convention
+```

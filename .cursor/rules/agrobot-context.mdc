@@ -1,0 +1,34 @@
+---
+description: Agrobot TOM v2 project context, hardware environments, and sprint state
+alwaysApply: true
+---
+
+# Project: Agrobot TOM v2
+Industry-grade autonomous perception pipeline for a tomato-picking robot. Bazel monorepo + ROS 2 Jazzy.
+
+## Hardware Environments
+Always label commands and environment-specific decisions with one of these tags:
+
+| Tag | Hardware | Accelerator | Role |
+|-----|----------|-------------|------|
+| `[MAC]` | MacBook M2 | Apple MPS | Infra, prototyping, code writing |
+| `[HPC]` | NYU Greene (A100/L4) | CUDA | Heavy training, Isaac Sim SDG |
+| `[EDGE]` | AMD 96GB Microcomputer | ROCm/MIGraphX | Real-time inference, VLMs, 3DGS |
+
+## Current Sprint
+<!-- UPDATE THIS AS SPRINTS ADVANCE -->
+**Phase 1 — Local Development**
+**Sprint 1 — Infrastructure & Environment Parity**
+Active tasks: Bazel monorepo, Docker ROS 2 Jazzy, Tailscale mesh networking
+
+## Sprint Roadmap
+- Sprint 1: Bazel monorepo · Docker ROS 2 Jazzy · Tailscale
+- Sprint 2: Isaac Sim Replicator SDG · DINOv2 + SAM2 zero-shot prototype `[HPC]` + `[MAC]`
+- Sprint 3: ROCm/MIGraphX optimization (>30 FPS) · ROSplat 3DGS `[EDGE]`
+- Sprint 4: Quantized Qwen-VL deployment · HIL testing `[EDGE]`
+
+## Key Architectural Patterns Already Established
+- **Thin node, thick library**: ROS 2 nodes subscribe/publish only; all logic lives in utility modules
+- **Pluggable detector interface**: `PlaceholderDetector` → `DINOv2SAM2Detector` in Sprint 2 (zero node changes)
+- **Sprint-forward comments**: `# Sprint N: replace with ...` marks all known future swap points
+- **apt over pip** for anything the ROS base image already ships (numpy, opencv, pytest, rclpy)
