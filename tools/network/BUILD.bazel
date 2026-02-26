@@ -1,0 +1,22 @@
+###############################################################################
+# tools/network/BUILD.bazel — Network Configuration Targets
+###############################################################################
+
+package(default_visibility = ["//visibility:public"])
+
+# Expose the DDS profile as a Bazel filegroup so other targets
+# (e.g., Docker image layers in Sprint 3) can depend on it as a file input.
+filegroup(
+    name = "dds_profile",
+    srcs = ["ros2_dds_profile.xml"],
+)
+
+filegroup(
+    name = "tailscale_acl",
+    srcs = ["tailscale_acl.json"],
+)
+
+filegroup(
+    name = "setup_scripts",
+    srcs = glob(["setup/*.sh"]),
+)

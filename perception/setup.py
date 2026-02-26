@@ -21,9 +21,9 @@ setup(
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="Agrobot Team",
-    maintainer_email="agrobot@example.com",
+    maintainer_email="howardw1120@gmail.com",
     description="Agrobot TOM v2 perception pipeline",
-    license="MIT",
+    license="None",
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [

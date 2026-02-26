@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ros2_dds_profile.xml — FastDDS Unicast Discovery Profile for Tailscale
+
+  WHY THIS FILE EXISTS
+  ─────────────────────
+  ROS 2 Jazzy uses FastDDS (eProsima) as its default DDS implementation.
+  By default, FastDDS uses multicast UDP for peer discovery. Multicast only
+  works on a local Layer-2 network segment — it does NOT cross subnets,
+  VPNs, or the internet.
+
+  Tailscale creates a virtual network where all peers are on different
+  subnets (each gets a 100.x.x.x address). To make ROS 2 work across this,
+  we switch FastDDS to UNICAST discovery:
+    - Multicast discovery: "shout" to the subnet, wait for responses
+    - Unicast discovery:   "knock directly" on each peer's known IP
+
+  HOW TO USE
+  ──────────
+  On each machine (Mac, HPC, AMD edge), set this env var before any ROS 2 command:
+
+    export FASTRTPS_DEFAULT_PROFILES_FILE=/path/to/ros2_dds_profile.xml
+
+  We'll add this to the Dockerfile.dev, the HPC module file, and the AMD edge
+  systemd service so it's always set automatically.
+
+  IMPORTANT: You MUST update the <address> tags below with the actual Tailscale
+  IPs of your machines. Run `tailscale ip` on each machine to get its address.
+  These IPs are stable (don't change when you switch networks).
+
+  ROS_DOMAIN_ID=42 is assumed throughout. If you change the domain ID, update
+  the port calculations in the comments below.
+-->
+
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+
+  <participant profile_name="agrobot_unicast_participant" is_default_profile="true">
+    <rtps>
+
+      <!-- ── Unicast Locator List ─────────────────────────────────────────
+           These are the Tailscale IPs of every machine in the network.
+           Each machine needs to list ALL other peers here.
+           FastDDS will directly contact each IP for discovery.
+
+           REPLACE THESE PLACEHOLDER IPs with your actual Tailscale addresses:
+             - Run `tailscale ip -4` on your Mac    → replace 100.AAA.AAA.AAA
+             - Run `tailscale ip -4` on HPC Greene  → replace 100.BBB.BBB.BBB
+             - Run `tailscale ip -4` on AMD edge    → replace 100.CCC.CCC.CCC
+
+           Port 17900 = DDS discovery server port for ROS_DOMAIN_ID=42
+           Formula: 7400 + (250 * domain_id) = 7400 + 10500 = 17900
+      -->
+      <defaultUnicastLocatorList>
+
+        <!-- Mac M2 (dev machine) -->
+        <locator>
+          <udpv4>
+            <address>100.AAA.AAA.AAA</address>
+            <port>17900</port>
+          </udpv4>
+        </locator>
+
+        <!-- NYU HPC Greene (training + simulation) -->
+        <locator>
+          <udpv4>
+            <address>100.BBB.BBB.BBB</address>
+            <port>17900</port>
+          </udpv4>
+        </locator>
+
+        <!-- AMD Edge (real-time inference + robot) -->
+        <locator>
+          <udpv4>
+            <address>100.CCC.CCC.CCC</address>
+            <port>17900</port>
+          </udpv4>
+        </locator>
+
+      </defaultUnicastLocatorList>
+
+      <!-- ── Disable Multicast ──────────────────────────────────────────────
+           Explicitly set multicast to an empty list to prevent FastDDS from
+           trying to use multicast (which would fail over Tailscale).
+      -->
+      <defaultMulticastLocatorList/>
+
+      <!-- ── Builtin (Discovery) Configuration ─────────────────────────────
+           metatrafficUnicastLocatorList: where THIS machine receives
+           discovery traffic. FastDDS will bind to this port on the Tailscale
+           interface to receive peer announcements.
+      -->
+      <builtin>
+        <metatrafficUnicastLocatorList>
+          <locator>
+            <udpv4>
+              <!-- 0.0.0.0 means "bind on all interfaces" including Tailscale's
+                   virtual interface (tailscale0 / utun). -->
+              <address>0.0.0.0</address>
+              <port>17900</port>
+            </udpv4>
+          </locator>
+        </metatrafficUnicastLocatorList>
+
+        <!-- Disable multicast meta-traffic discovery as well. -->
+        <metatrafficMulticastLocatorList/>
+
+        <!-- Initial peers: FastDDS actively contacts these IPs at startup
+             to announce itself and discover existing participants.
+             Same list as defaultUnicastLocatorList above. -->
+        <initialPeersList>
+          <locator>
+            <udpv4>
+              <address>100.AAA.AAA.AAA</address>
+              <port>17900</port>
+            </udpv4>
+          </locator>
+          <locator>
+            <udpv4>
+              <address>100.BBB.BBB.BBB</address>
+              <port>17900</port>
+            </udpv4>
+          </locator>
+          <locator>
+            <udpv4>
+              <address>100.CCC.CCC.CCC</address>
+              <port>17900</port>
+            </udpv4>
+          </locator>
+        </initialPeersList>
+
+      </builtin>
+
+    </rtps>
+  </participant>
+
+</profiles>

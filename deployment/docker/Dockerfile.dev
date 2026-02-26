@@ -38,6 +38,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-jazzy-cv-bridge \
     ros-jazzy-image-transport \
     ros-jazzy-vision-opencv \
+    ros-jazzy-vision-msgs \
     ros-jazzy-rqt \
     ros-jazzy-rqt-image-view \
     # Python 3.12 (ships with Ubuntu 24.04 Noble)
@@ -112,6 +113,11 @@ ENV ROS_DOMAIN_ID=42
 ENV ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 # Disable color output from colcon (cleaner in Docker logs).
 ENV COLCON_LOG_LEVEL=INFO
+# DDS unicast profile for Tailscale mesh networking.
+# The bind-mounted /workspace contains tools/network/ros2_dds_profile.xml
+# at runtime, but we set the path here so it's always correct.
+# Update the IPs inside ros2_dds_profile.xml with your actual Tailscale IPs.
+ENV FASTRTPS_DEFAULT_PROFILES_FILE=/workspace/tools/network/ros2_dds_profile.xml
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COPY deployment/docker/entrypoint.sh /entrypoint.sh

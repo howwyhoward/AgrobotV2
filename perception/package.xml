@@ -21,8 +21,8 @@
     using DINOv2 + SAM2 (Sprint 2) running on ROS 2 Jazzy.
   </description>
 
-  <maintainer email="agrobot@example.com">Agrobot Team</maintainer>
-  <license>MIT</license>
+  <maintainer email="howardw1120@gmail.com">Agrobot Team</maintainer>
+  <license>None</license>
 
   <!-- Build tool: ament_python for pure-Python ROS 2 packages -->
   <buildtool_depend>ament_python</buildtool_depend>

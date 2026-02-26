@@ -1,0 +1,110 @@
+{
+  // Tailscale ACL (Access Control List) for Agrobot TOM v2
+  //
+  // This file is pasted into: https://login.tailscale.com/admin/acls
+  //
+  // Design principles:
+  //   1. Principle of least privilege — nodes only expose the ports they need.
+  //   2. Tag-based rules — we use tags (not IP addresses) so the policy
+  //      remains valid even when a machine is replaced or its IP changes.
+  //   3. ROS 2 DDS ports are explicitly enumerated — DDS uses a range of
+  //      ephemeral ports; we open the standard range for our domain ID.
+  //
+  // ROS 2 DDS Port Calculation (for ROS_DOMAIN_ID=42):
+  //   Discovery server port  = 7400 + (250 * domain_id) + 0  = 17900
+  //   User traffic base      = 7400 + (250 * domain_id) + 1  = 17901
+  //   Ephemeral range        = 32768–60999 (Linux default)
+  //   We open 17900-17910 for DDS discovery + a unicast data range.
+
+  "tagOwners": {
+    // Tags define machine roles. A machine can have multiple tags.
+    // Tag owners (users who can assign this tag) — set to your Tailscale login.
+    "tag:dev":      ["autogroup:owner"],  // Mac M2 development machine
+    "tag:hpc":      ["autogroup:owner"],  // NYU HPC Greene compute nodes
+    "tag:robot":    ["autogroup:owner"],  // AMD edge robot computer
+    "tag:ci":       ["autogroup:owner"]   // Future: CI/CD runner
+  },
+
+  "acls": [
+    // ── Dev machine (Mac M2) ──────────────────────────────────────────────
+    // Allow dev to SSH into everything and reach all ROS 2 / web ports.
+    {
+      "action": "accept",
+      "src":    ["tag:dev"],
+      "dst":    ["tag:hpc", "tag:robot"],
+      "proto":  "tcp",
+      "ports":  ["22", "8888", "6006", "9090"]
+      // 22   = SSH
+      // 8888 = Jupyter Lab (HPC training notebooks)
+      // 6006 = TensorBoard
+      // 9090 = rosbridge_websocket (Foxglove Studio)
+    },
+
+    // ── ROS 2 DDS — Dev ↔ Robot (bidirectional) ───────────────────────────
+    // DDS requires both TCP and UDP on the discovery and data ports.
+    // We use unicast (see ros2_dds_profile.xml) to avoid multicast issues.
+    {
+      "action": "accept",
+      "src":    ["tag:dev", "tag:robot"],
+      "dst":    ["tag:dev", "tag:robot"],
+      "proto":  "udp",
+      "ports":  ["17900-17910", "7400-7500"]
+    },
+    {
+      "action": "accept",
+      "src":    ["tag:dev", "tag:robot"],
+      "dst":    ["tag:dev", "tag:robot"],
+      "proto":  "tcp",
+      "ports":  ["17900-17910", "7400-7500"]
+    },
+
+    // ── HPC file sync (rsync/SCP) ─────────────────────────────────────────
+    // Allow robot to pull trained model files directly from HPC after a
+    // training run, without routing through the dev machine.
+    {
+      "action": "accept",
+      "src":    ["tag:robot"],
+      "dst":    ["tag:hpc"],
+      "proto":  "tcp",
+      "ports":  ["22"]
+    },
+
+    // ── Deny everything else ──────────────────────────────────────────────
+    // Tailscale's default is deny-all. This comment is here as a reminder —
+    // no explicit deny rule is needed; anything not matched above is blocked.
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["autogroup:self"],
+      "proto":  "*"
+      // Every machine can always reach itself (loopback equivalence).
+    }
+  ],
+
+  // MagicDNS: gives each machine a stable hostname on the tailnet.
+  // After setup: `ssh hpc-greene` works from anywhere.
+  "dnsConfig": {
+    "domains":        ["agrobot.ts.net"],
+    "nameservers":    ["100.100.100.100"],  // Tailscale's internal DNS resolver
+    "disableIPv4":    false,
+    "disableIPv6":    false
+  },
+
+  // Hostnames to set for each tagged machine.
+  // Set these in the Tailscale admin panel → Machines → Edit name.
+  // Recommended names (document here for reference):
+  //   mac-m2       → your MacBook Pro M2
+  //   hpc-greene   → NYU HPC login node (or a specific compute node)
+  //   amd-edge     → the AMD 96GB microcomputer
+
+  "ssh": [
+    // Allow SSH via Tailscale SSH (no separate key management needed).
+    // This is optional but very convenient — Tailscale handles key rotation.
+    {
+      "action": "accept",
+      "src":    ["tag:dev"],
+      "dst":    ["tag:hpc", "tag:robot"],
+      "users":  ["autogroup:nonroot"]
+    }
+  ]
+}
