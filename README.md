@@ -1,76 +1,52 @@
-# AgrobotV2
+# Agrobot TOM v2
 
-Autonomous agricultural robot platform built on ROS 2 Jazzy. Modular monorepo covering perception, planning, and simulation with a Dockerized development environment and Bazel build system.
+Autonomous tomato-picking robot perception pipeline built on ROS 2 Jazzy, Bazel, and Docker.
 
----
-
-## Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Apple Silicon / M2+)
-- [Bazel](https://bazel.build/) (version pinned in `.bazelversion`)
+**Full project documentation:** [Design Doc & Roadmap](https://docs.google.com/document/d/1PyNI9mKTuDRYljvWCO47Ucky7pXPXgNRf4o25j-nc1A/edit?usp=sharing)
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/howwyhoward/AgrobotV2.git
-cd AgrobotV2
+# 1. Install prerequisites (Mac M2)
+brew install bazelisk
 
-# 2. Configure your environment
-cp .env.example .env
-# Edit .env — set AGROBOT_ROOT to the absolute path of this repo
+# 2. Start the dev container
+./compose.sh run --rm dev bash
 
-# 3. Start the dev container
-docker compose -f deployment/compose/docker-compose.yml up dev
+# 3. Inside the container — build the ROS 2 workspace
+ln -sfn /workspace/perception /ros2_ws/src/agrobot_perception
+cd /ros2_ws && colcon build --packages-select agrobot_perception --symlink-install
+source install/setup.bash
 
-# 4. Open an interactive shell inside the container
-docker compose -f deployment/compose/docker-compose.yml run dev bash
+# 4. Smoke-test the perception node
+ros2 run agrobot_perception tomato_detector --ros-args -p publish_debug_image:=false
 ```
 
 ---
 
-## Project Structure
+## Repo Structure
 
 ```
 AgrobotV2/
-├── perception/     # ROS 2 package — tomato detection & sensor processing
-├── planning/       # ROS 2 package — motion & task planning
-├── simulation/     # Simulation environments
+├── perception/         # ROS 2 — tomato detection node (DINOv2 + SAM2)
+├── planning/           # ROS 2 — motion & task planning
+├── simulation/         # NVIDIA Isaac Sim / Replicator SDG scripts (HPC)
 ├── deployment/
-│   ├── docker/     # Dockerfiles (dev, CUDA, ROCm)
-│   └── compose/    # docker-compose for local development
-└── tools/          # Bazel toolchain & platform configs
+│   ├── docker/         # Dockerfile.dev · Dockerfile.cuda · Dockerfile.rocm
+│   └── compose/        # docker-compose for local dev
+└── tools/
+    ├── platforms/       # Bazel platform targets (M2, CUDA, ROCm)
+    └── network/         # Tailscale ACL + DDS unicast profile
 ```
 
 ---
 
-## Docker Targets
+## Hardware Targets
 
-| Target | Use case |
-|---|---|
-| `Dockerfile.dev` | Local development on Apple Silicon |
-| `Dockerfile.cuda` | NVIDIA GPU inference (HPC / cloud) |
-| `Dockerfile.rocm` | AMD GPU inference (edge hardware) |
-
----
-
-## Building with Bazel
-
-```bash
-# Build all targets
-bazel build //...
-
-# Run tests
-bazel test //...
-```
-
----
-
-## Environment Variables
-
-| Variable | Description |
-|---|---|
-| `AGROBOT_ROOT` | Absolute path to the repo root (used by docker-compose) |
-| `ROS_DOMAIN_ID` | ROS 2 DDS domain — default `42` |
+| Environment | Accelerator | Dockerfile |
+|---|---|---|
+| Mac M2 (local dev) | Apple MPS | `Dockerfile.dev` |
+| NYU HPC Greene (training) | NVIDIA CUDA 12.4 | `Dockerfile.cuda` |
+| AMD Edge (robot) | ROCm 6 | `Dockerfile.rocm` |
