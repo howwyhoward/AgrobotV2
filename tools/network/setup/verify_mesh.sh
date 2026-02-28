@@ -11,7 +11,10 @@
 
 set -euo pipefail
 
-PEERS=("hpc-greene" "amd-edge")   # MagicDNS names — adjust if yours differ
+# NOTE: hpc-greene is NOT on the Tailscale mesh — it uses NYU AnyConnect VPN.
+# Only amd-edge is verified here. Greene connectivity is checked separately
+# via `ssh greene` (requires AnyConnect to be connected).
+PEERS=("amd-edge")
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

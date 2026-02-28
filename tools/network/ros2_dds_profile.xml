@@ -43,9 +43,9 @@
            FastDDS will directly contact each IP for discovery.
 
            REPLACE THESE PLACEHOLDER IPs with your actual Tailscale addresses:
-             - Run `tailscale ip -4` on your Mac    → replace 100.AAA.AAA.AAA
-             - Run `tailscale ip -4` on HPC Greene  → replace 100.BBB.BBB.BBB
-             - Run `tailscale ip -4` on AMD edge    → replace 100.CCC.CCC.CCC
+             - Run `tailscale ip -4` on your Mac  → replace 100.AAA.AAA.AAA
+             - Run `tailscale ip -4` on AMD edge  → replace 100.CCC.CCC.CCC
+             NOTE: HPC Greene is NOT listed — it uses AnyConnect, not Tailscale.
 
            Port 17900 = DDS discovery server port for ROS_DOMAIN_ID=42
            Formula: 7400 + (250 * domain_id) = 7400 + 10500 = 17900
@@ -60,13 +60,12 @@
           </udpv4>
         </locator>
 
-        <!-- NYU HPC Greene (training + simulation) -->
-        <locator>
-          <udpv4>
-            <address>100.BBB.BBB.BBB</address>
-            <port>17900</port>
-          </udpv4>
-        </locator>
+        <!-- NOTE: HPC Greene is NOT listed here.
+             Greene is accessed via NYU AnyConnect VPN (Cisco), which conflicts
+             with Tailscale's WireGuard UDP. Greene is training-only and does
+             not participate in live ROS 2 DDS communication.
+             Model artifacts are transferred Mac → AMD Edge via rsync over Tailscale
+             after being pulled from HPC via scp over AnyConnect. -->
 
         <!-- AMD Edge (real-time inference + robot) -->
         <locator>
@@ -111,12 +110,6 @@
           <locator>
             <udpv4>
               <address>100.AAA.AAA.AAA</address>
-              <port>17900</port>
-            </udpv4>
-          </locator>
-          <locator>
-            <udpv4>
-              <address>100.BBB.BBB.BBB</address>
               <port>17900</port>
             </udpv4>
           </locator>

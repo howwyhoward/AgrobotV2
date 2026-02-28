@@ -1,23 +1,43 @@
 # syntax=docker/dockerfile:1.7
 ###############################################################################
-# Dockerfile.rocm — AMD Edge Deployment (96GB Microcomputer)
+# Dockerfile.rocm — AMD Edge Deployment (GMKtec EVO-X2)
 #
-# Target platform : linux/amd64
-# Base            : rocm/dev-ubuntu-24.04 (ROCm 6.x, Ubuntu 24.04)
-# Purpose         : Real-time inference at the edge using AMD ROCm / MIGraphX.
-#                   This is where DINOv2, SAM2, and ROSplat run in production.
+# Hardware   : AMD Ryzen AI Max+ 395 (Strix Halo), Radeon 8060S, 96GB unified RAM
+# GPU arch   : gfx1151 (RDNA 3.5)
+# Target OS  : linux/amd64, Ubuntu 24.04, OEM kernel >= 6.14.0-1018
+# ROCm       : 7.2.0 (minimum for stable gfx1151 support per AMD official docs)
 #
-# NOTE: Built and run on the AMD edge machine directly.
+# ROCm + gfx1151 Compatibility Quick Reference:
+#   ROCm 6.4.x  → ⚠️  Unstable on most Ubuntu 24.04 + Strix Halo configs
+#   ROCm 7.2.0  → ✅  Stable (Ubuntu 24.04 OEM kernel >= 6.14.0-1018)
+#   ROCm 7.11.0 → ✅  Stable (kernel >= 6.18.4 or Ubuntu 26.04)
+#   Source: https://rocm.docs.amd.com/en/latest/how-to/system-optimization/strixhalo.html
 #
-# Build (run on AMD edge, NOT your Mac):
+# Memory architecture (IMPORTANT):
+#   The 96GB is UNIFIED memory shared between CPU and GPU via GPUVM/GTT.
+#   There is NO discrete VRAM. ROCm accesses system RAM through the GPU
+#   Translation Table (GTT). By default GTT is capped at ~50% of total RAM.
+#   The host machine MUST run `amd-ttm --set 90` before starting this container.
+#   (Done by amd_edge_setup.sh — see tools/network/setup/)
+#
+# Build (run on AMD edge machine, NOT your Mac):
 #   docker build \
 #     --file deployment/docker/Dockerfile.rocm \
 #     --tag agrobot-tom-v2/rocm:latest \
 #     .
+#
+# Run:
+#   docker run --rm -it \
+#     --device=/dev/kfd \
+#     --device=/dev/dri \
+#     --group-add video \
+#     --group-add render \
+#     -v $(pwd):/workspace \
+#     agrobot-tom-v2/rocm:latest bash
 ###############################################################################
 
-# ROCm 6.x official image built on Ubuntu 24.04
-FROM rocm/dev-ubuntu-24.04:latest AS system
+# ─── Stage 1: ROCm 7.2.0 Base + ROS 2 Jazzy ──────────────────────────────────
+FROM rocm/dev-ubuntu-24.04:7.2.0 AS system
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -38,6 +58,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-jazzy-ros-base \
     ros-jazzy-cv-bridge \
     ros-jazzy-image-transport \
+    ros-jazzy-vision-msgs \
     python3-pip \
     python3-dev \
     git \
@@ -46,18 +67,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # ─── Stage 2: Python + PyTorch ROCm ──────────────────────────────────────────
 FROM system AS python-deps
 
-# PyTorch ROCm wheels are published by AMD at a separate index URL.
-# --index-url points pip at AMD's PyPI mirror for ROCm-compiled PyTorch.
-# Sprint 3 will lock this to a specific ROCm version after benchmarking.
+# PyTorch for ROCm 6.4 wheels — these are the latest stable wheels compatible
+# with ROCm 7.x containers (PyTorch does not yet publish separate rocm7.x wheels;
+# rocm6.4-compiled wheels work because the HIP runtime ABI is forward-compatible).
+#
+# Sprint 3 will evaluate TheRock nightly builds (gfx1151-native) for maximum
+# throughput. For now, rocm6.4 wheels are the safe baseline.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages \
     torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/rocm6.2 && \
+    --index-url https://download.pytorch.org/whl/rocm6.4 && \
     pip3 install --break-system-packages \
     numpy \
     opencv-python-headless \
     pyyaml \
-    # ONNX Runtime with ROCm (MIGraphX backend)
     onnxruntime
 
 # ─── Stage 3: Final ROCm Image ────────────────────────────────────────────────
@@ -67,9 +90,34 @@ WORKDIR /workspace
 RUN mkdir -p /ros2_ws/src
 
 ENV ROS_DOMAIN_ID=42
-# Expose all AMD GPU devices to the container.
-# At runtime, add: --device=/dev/kfd --device=/dev/dri
-ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+ENV ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+
+# ── gfx1151 (Strix Halo / RDNA 3.5) GPU Configuration ────────────────────────
+#
+# HSA_OVERRIDE_GFX_VERSION: Tells ROCm which GFX ISA to use when the runtime
+# does not automatically detect the GPU correctly.
+#
+# gfx1151 = RDNA 3.5, major=11, minor=5, stepping=1 → "11.5.1"
+#
+# CRITICAL: Do NOT use 11.0.0, 11.0.2, or 11.0.3 for this chip. Those values
+# target gfx1100 (RX 7900 series, discrete RDNA 3) and cause memory access faults
+# (SIGBUS / "Page not present") on gfx1151's unified memory architecture.
+# Source: https://github.com/ROCm/ROCm/issues/5824
+#
+# With ROCm 7.2.0 + kernel >= 6.14.0-1018, gfx1151 should be auto-detected.
+# This override is kept as a safety fallback for edge cases.
+ENV HSA_OVERRIDE_GFX_VERSION=11.5.1
+
+# GPU_MAX_HW_QUEUES: Number of hardware compute queues exposed to ROCm.
+# Strix Halo has 8 CU clusters; setting 8 maximizes parallelism for
+# multi-stream inference (DINOv2 + SAM2 running concurrently in Sprint 2).
+ENV GPU_MAX_HW_QUEUES=8
+
+# HSA_ENABLE_SDMA=0: Disable System DMA engines for CPU↔GPU memory copies.
+# On unified memory (no discrete VRAM), SDMA overhead is higher than direct
+# CPU memcpy. Disabling it forces ROCm to use CPU-side blit copies, which
+# are faster for the GTT-backed allocations Strix Halo uses.
+ENV HSA_ENABLE_SDMA=0
 
 RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
 

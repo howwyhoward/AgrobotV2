@@ -2,15 +2,18 @@
 
 Autonomous tomato-picking robot perception pipeline built on ROS 2 Jazzy, Bazel, and Docker.
 
-**Full project documentation:** [Design Doc & Roadmap](https://docs.google.com/document/d/1PyNI9mKTuDRYljvWCO47Ucky7pXPXgNRf4o25j-nc1A/edit?usp=sharing)
+**Full design doc & roadmap:** [Google Doc](https://docs.google.com/document/d/1PyNI9mKTuDRYljvWCO47Ucky7pXPXgNRf4o25j-nc1A/edit?usp=sharing)
 
 ---
 
-## Quick Start
+## Quick Start (Mac M2)
 
 ```bash
-# 1. Install prerequisites (Mac M2)
+# Prerequisites (one-time)
 brew install bazelisk
+
+# 1. Verify Bazel sees the monorepo
+bazel query //...
 
 # 2. Start the dev container
 ./compose.sh run --rm dev bash
@@ -30,23 +33,23 @@ ros2 run agrobot_perception tomato_detector --ros-args -p publish_debug_image:=f
 
 ```
 AgrobotV2/
-├── perception/         # ROS 2 — tomato detection node (DINOv2 + SAM2)
-├── planning/           # ROS 2 — motion & task planning
-├── simulation/         # NVIDIA Isaac Sim / Replicator SDG scripts (HPC)
+├── perception/          # ROS 2 tomato detection node (DINOv2 + SAM2)
+├── planning/            # Robot arm motion planning
+├── simulation/          # NVIDIA Isaac Sim / Replicator SDG scripts (HPC)
 ├── deployment/
-│   ├── docker/         # Dockerfile.dev · Dockerfile.cuda · Dockerfile.rocm
-│   └── compose/        # docker-compose for local dev
+│   ├── docker/          # Dockerfile.dev · Dockerfile.cuda · Dockerfile.rocm
+│   └── compose/         # docker-compose for local dev
 └── tools/
-    ├── platforms/       # Bazel platform targets (M2, CUDA, ROCm)
-    └── network/         # Tailscale ACL + DDS unicast profile
+    ├── platforms/        # Bazel platform targets (M2, CUDA, ROCm)
+    └── network/          # Tailscale ACL + ROS 2 DDS unicast profile
 ```
 
 ---
 
 ## Hardware Targets
 
-| Environment | Accelerator | Dockerfile |
-|---|---|---|
-| Mac M2 (local dev) | Apple MPS | `Dockerfile.dev` |
-| NYU HPC Greene (training) | NVIDIA CUDA 12.4 | `Dockerfile.cuda` |
-| AMD Edge (robot) | ROCm 6 | `Dockerfile.rocm` |
+| Environment | Hardware | Accelerator | Dockerfile |
+|---|---|---|---|
+| Local dev | MacBook M2 | Apple MPS | `Dockerfile.dev` |
+| Training | NYU HPC Greene (A100 / L4) | CUDA 12.4 | `Dockerfile.cuda` |
+| Edge / Robot | GMKtec EVO-X2 (96GB) | ROCm 7.0 | `Dockerfile.rocm` |

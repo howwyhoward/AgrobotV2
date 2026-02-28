@@ -16,33 +16,39 @@
   //   Ephemeral range        = 32768–60999 (Linux default)
   //   We open 17900-17910 for DDS discovery + a unicast data range.
 
+  // ── NETWORK TOPOLOGY NOTE ─────────────────────────────────────────────────
+  // NYU HPC Greene is accessed via Cisco AnyConnect VPN (NYU-NET).
+  // AnyConnect is hub-and-spoke and conflicts with Tailscale's WireGuard UDP.
+  // Greene compute nodes also have no direct internet egress.
+  //
+  // RESULT: HPC is NOT on the Tailscale mesh. It is accessed exclusively via:
+  //   - SSH over AnyConnect VPN (interactive)
+  //   - scp/rsync over AnyConnect (model artifact transfer)
+  //
+  // Only Mac M2 ↔ AMD Edge require Tailscale (for live ROS 2 DDS).
+  // ──────────────────────────────────────────────────────────────────────────
+
   "tagOwners": {
-    // Tags define machine roles. A machine can have multiple tags.
-    // Tag owners (users who can assign this tag) — set to your Tailscale login.
     "tag:dev":      ["autogroup:owner"],  // Mac M2 development machine
-    "tag:hpc":      ["autogroup:owner"],  // NYU HPC Greene compute nodes
     "tag:robot":    ["autogroup:owner"],  // AMD edge robot computer
     "tag:ci":       ["autogroup:owner"]   // Future: CI/CD runner
+    // tag:hpc intentionally omitted — HPC uses AnyConnect, not Tailscale
   },
 
   "acls": [
-    // ── Dev machine (Mac M2) ──────────────────────────────────────────────
-    // Allow dev to SSH into everything and reach all ROS 2 / web ports.
+    // ── Dev machine (Mac M2) → Robot ──────────────────────────────────────
     {
       "action": "accept",
       "src":    ["tag:dev"],
-      "dst":    ["tag:hpc", "tag:robot"],
+      "dst":    ["tag:robot"],
       "proto":  "tcp",
-      "ports":  ["22", "8888", "6006", "9090"]
+      "ports":  ["22", "9090"]
       // 22   = SSH
-      // 8888 = Jupyter Lab (HPC training notebooks)
-      // 6006 = TensorBoard
       // 9090 = rosbridge_websocket (Foxglove Studio)
     },
 
     // ── ROS 2 DDS — Dev ↔ Robot (bidirectional) ───────────────────────────
-    // DDS requires both TCP and UDP on the discovery and data ports.
-    // We use unicast (see ros2_dds_profile.xml) to avoid multicast issues.
+    // This is the critical path: live ROS 2 topics across the Tailscale mesh.
     {
       "action": "accept",
       "src":    ["tag:dev", "tag:robot"],
@@ -58,17 +64,6 @@
       "ports":  ["17900-17910", "7400-7500"]
     },
 
-    // ── HPC file sync (rsync/SCP) ─────────────────────────────────────────
-    // Allow robot to pull trained model files directly from HPC after a
-    // training run, without routing through the dev machine.
-    {
-      "action": "accept",
-      "src":    ["tag:robot"],
-      "dst":    ["tag:hpc"],
-      "proto":  "tcp",
-      "ports":  ["22"]
-    },
-
     // ── Deny everything else ──────────────────────────────────────────────
     // Tailscale's default is deny-all. This comment is here as a reminder —
     // no explicit deny rule is needed; anything not matched above is blocked.
@@ -82,7 +77,8 @@
   ],
 
   // MagicDNS: gives each machine a stable hostname on the tailnet.
-  // After setup: `ssh hpc-greene` works from anywhere.
+  // After setup: `ssh amd-edge` works from anywhere (over Tailscale).
+  // HPC Greene is accessed via `ssh greene` (AnyConnect VPN, NOT Tailscale).
   "dnsConfig": {
     "domains":        ["agrobot.ts.net"],
     "nameservers":    ["100.100.100.100"],  // Tailscale's internal DNS resolver
@@ -99,11 +95,11 @@
 
   "ssh": [
     // Allow SSH via Tailscale SSH (no separate key management needed).
-    // This is optional but very convenient — Tailscale handles key rotation.
+    // Only tag:dev → tag:robot — HPC is NOT on Tailscale (uses AnyConnect VPN).
     {
       "action": "accept",
       "src":    ["tag:dev"],
-      "dst":    ["tag:hpc", "tag:robot"],
+      "dst":    ["tag:robot"],
       "users":  ["autogroup:nonroot"]
     }
   ]

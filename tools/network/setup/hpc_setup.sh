@@ -1,151 +1,153 @@
 #!/usr/bin/env bash
 ###############################################################################
-# hpc_setup.sh — Tailscale + ROS 2 Setup for NYU HPC Greene
+# hpc_setup.sh — NYU HPC Greene Access Setup (AnyConnect VPN)
 #
-# Run this ONCE on a Greene login node or compute node.
-# NOTE: Run on the HPC, NOT your Mac.
+# WHY NO TAILSCALE ON HPC:
+#   NYU HPC Greene requires Cisco AnyConnect VPN (NYU-NET Traffic Only).
+#   AnyConnect routes all traffic through NYU's servers and blocks WireGuard
+#   UDP ports. Greene compute nodes also have no direct internet egress —
+#   they reach the outside world through NYU's HTTP proxy only.
 #
-# NYU HPC specifics:
-#   - Greene uses SLURM for job scheduling.
-#   - You do NOT have root/sudo access on compute nodes.
-#   - Tailscale can run in "userspace networking" mode without root.
-#   - We install Tailscale as a user-space binary in ~/bin/.
+#   Tailscale requires UDP connectivity to its coordination server and direct
+#   WireGuard UDP between peers. Neither is available on Greene.
 #
-# What this does:
-#   1. Downloads the Tailscale userspace binary (no root needed)
-#   2. Starts tailscaled in userspace mode
-#   3. Authenticates with an auth key (you generate this in the Tailscale admin)
-#   4. Writes a SLURM module file to auto-setup the environment in batch jobs
+# WHAT WE USE INSTEAD:
+#   - SSH over AnyConnect for interactive access and file transfer
+#   - scp/rsync over AnyConnect for pulling trained model artifacts to Mac
+#   - A model_sync.sh script to relay those artifacts to the AMD edge via Tailscale
+#
+# Run this ONCE on your Mac terminal (NOT on the HPC).
+# Prerequisites: AnyConnect is connected (as shown in your screenshot).
 ###############################################################################
 
 set -euo pipefail
 
-REPO_ROOT="${HOME}/AgrobotV2"   # Adjust if your HPC clone path differs
-DDS_PROFILE="${REPO_ROOT}/tools/network/ros2_dds_profile.xml"
-TAILSCALE_DIR="${HOME}/.local/tailscale"
-TAILSCALE_BIN="${HOME}/bin/tailscale"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+
+# ── You must fill these in ────────────────────────────────────────────────────
+# Your NYU NetID (e.g., kh1234)
+NYU_NETID="${NYU_NETID:-YOUR_NETID}"
+# Greene login node hostname (standard)
+GREENE_HOST="greene.hpc.nyu.edu"
+# Your scratch directory on Greene (replace <netid> with yours)
+GREENE_SCRATCH="/scratch/${NYU_NETID}/agrobot"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Agrobot TOM v2 — NYU HPC Greene Network Setup"
+echo "  Agrobot TOM v2 — NYU HPC Greene Access Setup"
+echo "  (AnyConnect VPN — no Tailscale)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# ── Step 1: Download Tailscale (userspace mode, no root) ──────────────────────
-echo "[1/4] Downloading Tailscale userspace binary..."
-mkdir -p "${HOME}/bin" "${TAILSCALE_DIR}"
-
-TAILSCALE_VERSION="1.80.2"
-TAILSCALE_ARCHIVE="tailscale_${TAILSCALE_VERSION}_amd64.tgz"
-TAILSCALE_URL="https://pkgs.tailscale.com/stable/${TAILSCALE_ARCHIVE}"
-
-if [ ! -f "${TAILSCALE_BIN}" ]; then
-    curl -fsSL "${TAILSCALE_URL}" -o "/tmp/${TAILSCALE_ARCHIVE}"
-    tar -xzf "/tmp/${TAILSCALE_ARCHIVE}" -C /tmp/
-    cp "/tmp/tailscale_${TAILSCALE_VERSION}_amd64/tailscale" "${TAILSCALE_BIN}"
-    cp "/tmp/tailscale_${TAILSCALE_VERSION}_amd64/tailscaled" "${HOME}/bin/tailscaled"
-    chmod +x "${TAILSCALE_BIN}" "${HOME}/bin/tailscaled"
-    rm -rf "/tmp/tailscale_${TAILSCALE_VERSION}_amd64" "/tmp/${TAILSCALE_ARCHIVE}"
-    echo "      Tailscale ${TAILSCALE_VERSION} installed to ~/bin/"
-else
-    echo "      Tailscale already installed at ${TAILSCALE_BIN}"
+if [ "${NYU_NETID}" = "YOUR_NETID" ]; then
+    echo "ERROR: Set your NYU NetID first:"
+    echo "  export NYU_NETID=kh1234"
+    echo "  bash tools/network/setup/hpc_setup.sh"
+    exit 1
 fi
 
-# ── Step 2: Start tailscaled in userspace mode ────────────────────────────────
-# Userspace networking: Tailscale creates a virtual tun device in user space.
-# No kernel module, no root. Perfect for HPC environments.
-echo ""
-echo "[2/4] Starting tailscaled (userspace mode)..."
-
-if ! pgrep -x tailscaled &>/dev/null; then
-    nohup "${HOME}/bin/tailscaled" \
-        --state="${TAILSCALE_DIR}/tailscaled.state" \
-        --socket="${TAILSCALE_DIR}/tailscaled.sock" \
-        --tun=userspace-networking \
-        &>/tmp/tailscaled.log &
-    sleep 3
-    echo "      tailscaled started. PID: $(pgrep -x tailscaled || echo 'unknown')"
-else
-    echo "      tailscaled already running."
+# ── Step 1: Verify AnyConnect is active ──────────────────────────────────────
+echo "[1/4] Checking AnyConnect VPN status..."
+if ! ping -c 1 -W 2 "${GREENE_HOST}" &>/dev/null; then
+    echo ""
+    echo "      Cannot reach ${GREENE_HOST}."
+    echo "      Make sure Cisco AnyConnect is connected to NYU-NET."
+    echo "      Open the AnyConnect app → Connect to: vpn.nyu.edu"
+    exit 1
 fi
+echo "      ✓ ${GREENE_HOST} is reachable over AnyConnect."
 
-# ── Step 3: Authenticate ──────────────────────────────────────────────────────
+# ── Step 2: Write SSH config for frictionless Greene access ──────────────────
 echo ""
-echo "[3/4] Authenticating with Tailscale..."
-echo ""
-echo "      You need a Tailscale auth key. Generate one here:"
-echo "      https://login.tailscale.com/admin/settings/keys"
-echo "      → New auth key → Reusable: No → Tags: tag:hpc → Create key"
-echo ""
-echo "      Then run:"
-echo "        ${TAILSCALE_BIN} --socket=${TAILSCALE_DIR}/tailscaled.sock \\"
-echo "          up --authkey=<YOUR_AUTH_KEY> --hostname=hpc-greene --advertise-tags=tag:hpc"
-echo ""
+echo "[2/4] Writing SSH config for Greene..."
 
-TAILSCALE_IP=$(${TAILSCALE_BIN} --socket="${TAILSCALE_DIR}/tailscaled.sock" ip -4 2>/dev/null || echo "NOT_YET_AUTHENTICATED")
-echo "      Current Tailscale IP: ${TAILSCALE_IP}"
+SSH_CONFIG_BLOCK=$(cat <<EOF
 
-# ── Step 4: Write the environment to .bashrc + SLURM preamble ─────────────────
-echo ""
-echo "[4/4] Writing ROS 2 + DDS environment to ~/.bashrc..."
-
-SHELL_SNIPPET=$(cat <<EOF
-
-# ── Agrobot TOM v2 — ROS 2 + Tailscale Network Config (HPC Greene) ───────────
+# ── Agrobot: NYU HPC Greene ────────────────────────────────────────────────
 # Added by tools/network/setup/hpc_setup.sh
-export PATH="${HOME}/bin:\${PATH}"
-export ROS_DOMAIN_ID=42
-export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
-export FASTRTPS_DEFAULT_PROFILES_FILE="${DDS_PROFILE}"
-# Start tailscaled if not running (useful in interactive sessions).
-if ! pgrep -x tailscaled &>/dev/null; then
-    nohup "${HOME}/bin/tailscaled" \
-        --state="${TAILSCALE_DIR}/tailscaled.state" \
-        --socket="${TAILSCALE_DIR}/tailscaled.sock" \
-        --tun=userspace-networking \
-        &>/tmp/tailscaled.log &
-fi
-# ─────────────────────────────────────────────────────────────────────────────
+# Usage: ssh greene   (AnyConnect must be connected)
+Host greene
+    HostName ${GREENE_HOST}
+    User ${NYU_NETID}
+    # Multiplex connections: first SSH opens a control socket.
+    # Subsequent `ssh greene` or `scp greene:...` reuse it instantly — no password re-prompt.
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%r@%h:%p
+    ControlPersist 10m
+    # Forward your SSH agent so you can git clone / push from Greene.
+    ForwardAgent yes
+    ServerAliveInterval 60
+# ──────────────────────────────────────────────────────────────────────────
 EOF
 )
 
-if ! grep -q "Agrobot TOM v2" ~/.bashrc 2>/dev/null; then
-    echo "${SHELL_SNIPPET}" >> ~/.bashrc
-    echo "      Written to ~/.bashrc"
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+
+if ! grep -q "NYU HPC Greene" ~/.ssh/config 2>/dev/null; then
+    echo "${SSH_CONFIG_BLOCK}" >> ~/.ssh/config
+    chmod 600 ~/.ssh/config
+    echo "      Written to ~/.ssh/config"
+    echo "      You can now use: ssh greene"
 else
-    echo "      Already present in ~/.bashrc — skipping."
+    echo "      Already present in ~/.ssh/config — skipping."
 fi
 
-# Write a SLURM job preamble template for batch jobs that need ROS 2 / Tailscale.
+# ── Step 3: Create scratch directory and clone repo on Greene ─────────────────
+echo ""
+echo "[3/4] Setting up Greene scratch directory..."
+echo ""
+echo "      Run these commands manually on Greene (after: ssh greene):"
+echo ""
+echo "      ┌─────────────────────────────────────────────────────────┐"
+echo "      │ mkdir -p ${GREENE_SCRATCH}                              │"
+echo "      │ cd ${GREENE_SCRATCH}                                    │"
+echo "      │ git clone <your-repo-url> AgrobotV2                    │"
+echo "      │                                                         │"
+echo "      │ # Load the Singularity/Apptainer container with ROS 2  │"
+echo "      │ module load singularity/3.11.4                          │"
+echo "      └─────────────────────────────────────────────────────────┘"
+
+# ── Step 4: Write SLURM environment preamble ──────────────────────────────────
+echo ""
+echo "[4/4] Writing SLURM preamble for training jobs..."
+
 cat > "${REPO_ROOT}/tools/network/setup/slurm_ros2_preamble.sh" <<'SLURM_EOF'
 #!/usr/bin/env bash
-# slurm_ros2_preamble.sh — Source this at the top of any SLURM job script
-# that needs ROS 2 or Tailscale networking.
+###############################################################################
+# slurm_ros2_preamble.sh — Source at the top of any SLURM batch script.
+#
+# Greene specifics:
+#   - No Tailscale. No WireGuard. Use scp/rsync to transfer artifacts.
+#   - ROS 2 is available inside a Singularity container.
+#   - CUDA 12.x is available via the module system.
 #
 # Usage in your SLURM script:
-#   source ~/AgrobotV2/tools/network/setup/slurm_ros2_preamble.sh
+#   source ~/agrobot/tools/network/setup/slurm_ros2_preamble.sh
+###############################################################################
 
-# Load ROS 2 Jazzy (assumes it is installed or available via Singularity).
-# On Greene you'll likely use a Singularity container — adjust as needed.
-source /opt/ros/jazzy/setup.bash 2>/dev/null || true
+# CUDA + cuDNN from Greene's module system
+module purge
+module load cuda/12.4.1
+module load cudnn/8.9.7.29-cuda12
 
+# Python environment (Singularity container in Sprint 2)
+export PYTHONPATH="${HOME}/agrobot:${PYTHONPATH:-}"
+
+# ROS 2 environment — available inside Singularity only, not on bare SLURM nodes.
+# Use `singularity exec` wrappers for ros2 commands in batch jobs.
 export ROS_DOMAIN_ID=42
-export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
-export FASTRTPS_DEFAULT_PROFILES_FILE="${HOME}/AgrobotV2/tools/network/ros2_dds_profile.xml"
-
-# Ensure tailscaled is running on compute node.
-if ! pgrep -x tailscaled &>/dev/null; then
-    nohup "${HOME}/bin/tailscaled" \
-        --state="${HOME}/.local/tailscale/tailscaled.state" \
-        --socket="${HOME}/.local/tailscale/tailscaled.sock" \
-        --tun=userspace-networking \
-        &>/tmp/tailscaled.log &
-    sleep 5
-fi
 SLURM_EOF
 
-echo ""
 echo "      Created: tools/network/setup/slurm_ros2_preamble.sh"
-echo "      Use this at the top of SLURM batch scripts that need ROS 2."
 echo ""
-echo "Done. Update ros2_dds_profile.xml with IP: ${TAILSCALE_IP}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "DONE. Summary of your HPC workflow:"
+echo ""
+echo "  1. Connect AnyConnect → vpn.nyu.edu → NYU-NET"
+echo "  2. ssh greene                    ← uses the SSH config above"
+echo "  3. sbatch <your_training_job>    ← Sprint 2 SLURM scripts"
+echo "  4. scp greene:<path> ./models/   ← pull trained weights to Mac"
+echo "  5. rsync ./models/ amd-edge:...  ← push to robot via Tailscale"
+echo ""
+echo "  See tools/network/setup/model_sync.sh for steps 4–5 automated."

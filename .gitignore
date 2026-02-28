@@ -23,5 +23,16 @@ __pycache__/
 # Docker Compose env (machine-specific paths — copy .env.example to .env)
 .env
 
+# Model weights (large binary files — use Git LFS or model_sync.sh instead)
+models/*.onnx
+models/*.pt
+models/*.pth
+models/*.bin
+models/*.safetensors
+!models/.gitkeep
+
+# SSH control sockets
+~/.ssh/cm-*
+
 # OS
 .DS_Store
