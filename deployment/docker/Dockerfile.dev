@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 ###############################################################################
-# Dockerfile.dev — Local Development (Mac M2 / Apple Silicon)
+# Dockerfile.dev — Local Development (Apple Silicon Mac)
 #
 # Target platform : linux/arm64
 # Base            : ros:jazzy-ros-base (Ubuntu 24.04 Noble, ARM64-native)

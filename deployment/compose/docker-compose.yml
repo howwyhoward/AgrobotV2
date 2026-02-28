@@ -1,7 +1,7 @@
 ###############################################################################
 # docker-compose.yml — Local Development Orchestration
 #
-# This file defines the services for your local dev workflow on Mac M2.
+# This file defines the services for your local dev workflow on a Mac.
 # It is NOT used on HPC or AMD edge (those environments use standalone docker).
 #
 # Usage (run from AgrobotV2 root on your Mac):

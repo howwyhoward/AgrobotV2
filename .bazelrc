@@ -25,8 +25,8 @@ build --disk_cache=~/.cache/bazel/agrobot_disk_cache
 # `bazel build --config=bep //...` writes a BuildEventProtocol stream.
 build:bep --build_event_json_file=/tmp/agrobot_bep.json
 
-# ─── Platform: Apple Silicon (M2) ─────────────────────────────────────────────
-# When you run `bazel build --config=apple_silicon //...` on your Mac,
+# ─── Platform: Local Mac (Apple Silicon) ──────────────────────────────────────
+# When you run `bazel build --config=apple_silicon //...` on your local Mac,
 # these flags ensure Bazel targets the arm64 architecture.
 
 build:apple_silicon --platforms=//tools/platforms:macos_arm64

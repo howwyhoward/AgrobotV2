@@ -25,18 +25,18 @@
   //   - SSH over AnyConnect VPN (interactive)
   //   - scp/rsync over AnyConnect (model artifact transfer)
   //
-  // Only Mac M2 ↔ AMD Edge require Tailscale (for live ROS 2 DDS).
+  // Only local Mac ↔ AMD Edge require Tailscale (for live ROS 2 DDS).
   // ──────────────────────────────────────────────────────────────────────────
 
   "tagOwners": {
-    "tag:dev":      ["autogroup:owner"],  // Mac M2 development machine
+    "tag:dev":      ["autogroup:owner"],  // local Mac (AI/Systems engineer machine)
     "tag:robot":    ["autogroup:owner"],  // AMD edge robot computer
     "tag:ci":       ["autogroup:owner"]   // Future: CI/CD runner
     // tag:hpc intentionally omitted — HPC uses AnyConnect, not Tailscale
   },
 
   "acls": [
-    // ── Dev machine (Mac M2) → Robot ──────────────────────────────────────
+    // ── Dev machine (local Mac) → Robot ───────────────────────────────────
     {
       "action": "accept",
       "src":    ["tag:dev"],
@@ -89,7 +89,7 @@
   // Hostnames to set for each tagged machine.
   // Set these in the Tailscale admin panel → Machines → Edit name.
   // Recommended names (document here for reference):
-  //   mac-m2       → your MacBook Pro M2
+  //   local-mac    → the AI/Systems engineer's development machine
   //   hpc-greene   → NYU HPC login node (or a specific compute node)
   //   amd-edge     → the AMD 96GB microcomputer
 

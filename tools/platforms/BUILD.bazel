@@ -6,12 +6,12 @@
 # Bazel resolves all targets against the `macos_arm64` platform below.
 #
 # This is how a single monorepo produces correct artifacts for all three of our
-# environments: M2 Mac, NVIDIA HPC, and AMD Edge — without code changes.
+# environments: local Mac, NVIDIA HPC, and AMD Edge — without code changes.
 ###############################################################################
 
 package(default_visibility = ["//visibility:public"])
 
-# ─── Apple Silicon (Your MacBook M2) ──────────────────────────────────────────
+# ─── Apple Silicon (Local Mac) ────────────────────────────────────────────────
 platform(
     name = "macos_arm64",
     constraint_values = [

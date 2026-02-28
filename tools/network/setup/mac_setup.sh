@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ###############################################################################
-# mac_setup.sh — Tailscale + ROS 2 Network Setup for Mac M2
+# mac_setup.sh — Tailscale + ROS 2 Network Setup for the local Mac
 #
 # Run this ONCE on your Mac terminal from the AgrobotV2 repo root.
 # Prerequisites: Homebrew installed, internet access.
@@ -19,7 +19,7 @@ DDS_PROFILE="${REPO_ROOT}/tools/network/ros2_dds_profile.xml"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Agrobot TOM v2 — Mac M2 Network Setup"
+echo "  Agrobot TOM v2 — Local Mac Network Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 

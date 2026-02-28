@@ -11,7 +11,7 @@ Always label commands and environment-specific decisions with one of these tags:
 
 | Tag | Hardware | Accelerator | Role |
 |-----|----------|-------------|------|
-| `[MAC]` | MacBook M2 | Apple MPS | Infra, prototyping, code writing |
+| `[MAC]` | Local Mac (Apple Silicon) | Apple MPS | Infra, prototyping, code writing |
 | `[HPC]` | NYU Greene (A100/L4) | CUDA | Heavy training, Isaac Sim SDG |
 | `[EDGE]` | AMD 96GB Microcomputer | ROCm/MIGraphX | Real-time inference, VLMs, 3DGS |
 

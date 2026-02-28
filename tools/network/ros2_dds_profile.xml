@@ -52,7 +52,7 @@
       -->
       <defaultUnicastLocatorList>
 
-        <!-- Mac M2 (dev machine) -->
+        <!-- Local Mac (AI/Systems engineer dev machine) -->
         <locator>
           <udpv4>
             <address>100.AAA.AAA.AAA</address>
