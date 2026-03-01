@@ -41,6 +41,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-jazzy-vision-msgs \
     ros-jazzy-rqt \
     ros-jazzy-rqt-image-view \
+    ros-jazzy-realsense2-camera \
     # Python 3.12 (ships with Ubuntu 24.04 Noble)
     python3-pip \
     python3-dev \

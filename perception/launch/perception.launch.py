@@ -38,8 +38,9 @@ def generate_launch_description() -> LaunchDescription:
 
     camera_topic_arg = DeclareLaunchArgument(
         "camera_topic",
-        default_value="/camera/image_raw",
-        description="Input camera topic (sensor_msgs/Image)",
+        default_value="/camera/camera/color/image_raw",
+        description="Input camera topic (sensor_msgs/Image). Default matches the "
+                    "realsense2_camera ROS 2 driver topic for the Intel D456.",
     )
 
     # ── Tomato Detector Node ───────────────────────────────────────────────────

@@ -42,9 +42,9 @@
            Each machine needs to list ALL other peers here.
            FastDDS will directly contact each IP for discovery.
 
-           REPLACE THESE PLACEHOLDER IPs with your actual Tailscale addresses:
-             - Run `tailscale ip -4` on your Mac  → replace 100.AAA.AAA.AAA
-             - Run `tailscale ip -4` on AMD edge  → replace 100.CCC.CCC.CCC
+           Tailscale IPs (fill in when each machine joins the tailnet):
+             - Local Mac   : 100.100.5.40          ← confirmed
+             - AMD edge    : 100.CCC.CCC.CCC        ← fill in after amd_edge_setup.sh
              NOTE: HPC Greene is NOT listed — it uses AnyConnect, not Tailscale.
 
            Port 17900 = DDS discovery server port for ROS_DOMAIN_ID=42
@@ -55,7 +55,7 @@
         <!-- Local Mac (AI/Systems engineer dev machine) -->
         <locator>
           <udpv4>
-            <address>100.AAA.AAA.AAA</address>
+            <address>100.100.5.40</address>
             <port>17900</port>
           </udpv4>
         </locator>
@@ -109,7 +109,7 @@
         <initialPeersList>
           <locator>
             <udpv4>
-              <address>100.AAA.AAA.AAA</address>
+              <address>100.100.5.40</address>
               <port>17900</port>
             </udpv4>
           </locator>

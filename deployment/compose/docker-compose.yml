@@ -53,6 +53,20 @@ services:
       # Speeds up `bazel build` when run inside Docker.
       - bazel_cache:/root/.cache/bazel
 
+    # ── Camera Hardware Passthrough ───────────────────────────────────────────
+    # Exposes the USB bus so the Intel RealSense D456 is accessible inside the
+    # container via the ros-jazzy-realsense2-camera driver.
+    #
+    # Linux (AMD edge): this gives the container direct USB device access. No
+    # additional configuration needed beyond running this compose file.
+    #
+    # Mac (dev): Docker Desktop routes USB through its Linux VM. You must ALSO
+    # enable the camera in Docker Desktop → Settings → Resources → USB.
+    # Without that setting, /dev/bus/usb exists in the VM but the physical
+    # RealSense is not forwarded through the hypervisor layer.
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+
     # ── Environment ───────────────────────────────────────────────────────────
     environment:
       # ROS_DOMAIN_ID must match across all containers and physical machines
