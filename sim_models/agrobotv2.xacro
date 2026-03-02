@@ -1,8 +1,340 @@
 <?xml version="1.0"?>
-<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="agrobotv2">
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="agrobot_v2">
 
-  <xacro:property name="base_length" value="0.6"/>
-  <xacro:property name="base_width" value="0.4"/>
-  <xacro:property name="base_height" value="0.2"/>
+  <xacro:property name="config" value="${xacro.load_yaml('robot_params.yaml')}"/>
+
+  <material name="grey"><color rgba="0.5 0.5 0.5 1.0"/></material>
+  <material name="orange"><color rgba="1.0 0.5 0.0 1.0"/></material>
+  <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+
+  <!-- ======== WORLD & RAIL (no inertial — fixed to world) ======== -->
+
+  <link name="world"/>
+
+  <joint name="world_to_rail" type="fixed">
+    <parent link="world"/>
+    <child link="rail_link"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rail_link">
+    <visual>
+      <origin xyz="${config['rail']['track_length']/2} 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['rail']['track_length']} 0.1 0.05"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+  </link>
+
+  <!-- ======== CARRIAGE ======== -->
+
+  <joint name="carriage_joint" type="prismatic">
+    <parent link="rail_link"/>
+    <child link="carriage_link"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="${config['rail']['travel_limit_min']}"
+           upper="${config['rail']['travel_limit_max']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="carriage_link">
+    <visual>
+      <geometry>
+        <box size="${config['link_properties']['carriage']['width']} ${config['link_properties']['carriage']['depth']} ${config['link_properties']['carriage']['height']}"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${config['link_properties']['carriage']['width']} ${config['link_properties']['carriage']['depth']} ${config['link_properties']['carriage']['height']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${config['link_properties']['carriage']['mass']}"/>
+      <inertia
+        ixx="${config['link_properties']['carriage']['mass'] * (config['link_properties']['carriage']['height']**2 + config['link_properties']['carriage']['depth']**2) / 12}"
+        iyy="${config['link_properties']['carriage']['mass'] * (config['link_properties']['carriage']['width']**2 + config['link_properties']['carriage']['height']**2) / 12}"
+        izz="${config['link_properties']['carriage']['mass'] * (config['link_properties']['carriage']['width']**2 + config['link_properties']['carriage']['depth']**2) / 12}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ======== SHOULDER YAW ======== -->
+
+  <joint name="shoulder_yaw_joint" type="revolute">
+    <parent link="carriage_link"/>
+    <child link="shoulder_yaw_link"/>
+    <origin xyz="${config['arm_geometry']['rail_to_shoulder_yaw'][0]}
+                 ${config['arm_geometry']['rail_to_shoulder_yaw'][1]}
+                 ${config['arm_geometry']['rail_to_shoulder_yaw'][2]}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${config['joint_limits']['shoulder_yaw']['lower']}"
+           upper="${config['joint_limits']['shoulder_yaw']['upper']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="shoulder_yaw_link">
+    <visual>
+      <origin xyz="0 0 ${config['link_properties']['shoulder_base']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['shoulder_base']['width']} ${config['link_properties']['shoulder_base']['depth']} ${config['link_properties']['shoulder_base']['height']}"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${config['link_properties']['shoulder_base']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['shoulder_base']['width']} ${config['link_properties']['shoulder_base']['depth']} ${config['link_properties']['shoulder_base']['height']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${config['link_properties']['shoulder_base']['height']/2}" rpy="0 0 0"/>
+      <mass value="${config['link_properties']['shoulder_base']['mass']}"/>
+      <inertia
+        ixx="${config['link_properties']['shoulder_base']['mass'] * (config['link_properties']['shoulder_base']['height']**2 + config['link_properties']['shoulder_base']['depth']**2) / 12}"
+        iyy="${config['link_properties']['shoulder_base']['mass'] * (config['link_properties']['shoulder_base']['width']**2 + config['link_properties']['shoulder_base']['height']**2) / 12}"
+        izz="${config['link_properties']['shoulder_base']['mass'] * (config['link_properties']['shoulder_base']['width']**2 + config['link_properties']['shoulder_base']['depth']**2) / 12}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ======== SHOULDER PITCH / UPPER ARM ======== -->
+
+  <joint name="shoulder_pitch_joint" type="revolute">
+    <parent link="shoulder_yaw_link"/>
+    <child link="upper_arm_link"/>
+    <origin xyz="${config['arm_geometry']['yaw_to_shoulder_pitch'][0]}
+                 ${config['arm_geometry']['yaw_to_shoulder_pitch'][1]}
+                 ${config['arm_geometry']['yaw_to_shoulder_pitch'][2]}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${config['joint_limits']['shoulder_pitch']['lower']}"
+           upper="${config['joint_limits']['shoulder_pitch']['upper']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="upper_arm_link">
+    <visual>
+      <origin xyz="0 0 ${config['link_properties']['upper_arm']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['upper_arm']['width']} ${config['link_properties']['upper_arm']['depth']} ${config['link_properties']['upper_arm']['height']}"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${config['link_properties']['upper_arm']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['upper_arm']['width']} ${config['link_properties']['upper_arm']['depth']} ${config['link_properties']['upper_arm']['height']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${config['link_properties']['upper_arm']['height']/2}" rpy="0 0 0"/>
+      <mass value="${config['link_properties']['upper_arm']['mass']}"/>
+      <inertia
+        ixx="${config['link_properties']['upper_arm']['mass'] * (config['link_properties']['upper_arm']['height']**2 + config['link_properties']['upper_arm']['depth']**2) / 12}"
+        iyy="${config['link_properties']['upper_arm']['mass'] * (config['link_properties']['upper_arm']['width']**2 + config['link_properties']['upper_arm']['height']**2) / 12}"
+        izz="${config['link_properties']['upper_arm']['mass'] * (config['link_properties']['upper_arm']['width']**2 + config['link_properties']['upper_arm']['depth']**2) / 12}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ======== ELBOW PITCH / FOREARM ======== -->
+
+  <joint name="elbow_pitch_joint" type="revolute">
+    <parent link="upper_arm_link"/>
+    <child link="forearm_link"/>
+    <origin xyz="${config['arm_geometry']['shoulder_to_elbow'][0]}
+                 ${config['arm_geometry']['shoulder_to_elbow'][1]}
+                 ${config['arm_geometry']['shoulder_to_elbow'][2]}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${config['joint_limits']['elbow_pitch']['lower']}"
+           upper="${config['joint_limits']['elbow_pitch']['upper']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="forearm_link">
+    <visual>
+      <origin xyz="0 0 ${config['link_properties']['forearm']['length']/2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${config['link_properties']['forearm']['radius']}"
+                  length="${config['link_properties']['forearm']['length']}"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${config['link_properties']['forearm']['length']/2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${config['link_properties']['forearm']['radius']}"
+                  length="${config['link_properties']['forearm']['length']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${config['link_properties']['forearm']['length']/2}" rpy="0 0 0"/>
+      <mass value="${config['link_properties']['forearm']['mass']}"/>
+      <inertia
+        ixx="${config['link_properties']['forearm']['mass'] * (3 * config['link_properties']['forearm']['radius']**2 + config['link_properties']['forearm']['length']**2) / 12}"
+        iyy="${config['link_properties']['forearm']['mass'] * (3 * config['link_properties']['forearm']['radius']**2 + config['link_properties']['forearm']['length']**2) / 12}"
+        izz="${config['link_properties']['forearm']['mass'] * config['link_properties']['forearm']['radius']**2 / 2}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ======== WRIST PITCH ======== -->
+
+  <joint name="wrist_pitch_joint" type="revolute">
+    <parent link="forearm_link"/>
+    <child link="wrist_link"/>
+    <origin xyz="${config['arm_geometry']['elbow_to_wrist_pitch'][0]}
+                 ${config['arm_geometry']['elbow_to_wrist_pitch'][1]}
+                 ${config['arm_geometry']['elbow_to_wrist_pitch'][2]}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${config['joint_limits']['wrist_pitch']['lower']}"
+           upper="${config['joint_limits']['wrist_pitch']['upper']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="wrist_link">
+    <visual>
+      <origin xyz="0 0 ${config['link_properties']['wrist']['length']/2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${config['link_properties']['wrist']['radius']}"
+                  length="${config['link_properties']['wrist']['length']}"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${config['link_properties']['wrist']['length']/2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${config['link_properties']['wrist']['radius']}"
+                  length="${config['link_properties']['wrist']['length']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${config['link_properties']['wrist']['length']/2}" rpy="0 0 0"/>
+      <mass value="${config['link_properties']['wrist']['mass']}"/>
+      <inertia
+        ixx="${config['link_properties']['wrist']['mass'] * (3 * config['link_properties']['wrist']['radius']**2 + config['link_properties']['wrist']['length']**2) / 12}"
+        iyy="${config['link_properties']['wrist']['mass'] * (3 * config['link_properties']['wrist']['radius']**2 + config['link_properties']['wrist']['length']**2) / 12}"
+        izz="${config['link_properties']['wrist']['mass'] * config['link_properties']['wrist']['radius']**2 / 2}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ======== WRIST ROLL / GRIPPER ======== -->
+
+  <joint name="wrist_roll_joint" type="revolute">
+    <parent link="wrist_link"/>
+    <child link="gripper_base_link"/>
+    <origin xyz="${config['arm_geometry']['wrist_pitch_to_roll'][0]}
+                 ${config['arm_geometry']['wrist_pitch_to_roll'][1]}
+                 ${config['arm_geometry']['wrist_pitch_to_roll'][2]}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${config['joint_limits']['wrist_roll']['lower']}"
+           upper="${config['joint_limits']['wrist_roll']['upper']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="gripper_base_link">
+    <visual>
+      <geometry>
+        <box size="${config['link_properties']['gripper_base']['width']} ${config['link_properties']['gripper_base']['depth']} ${config['link_properties']['gripper_base']['height']}"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${config['link_properties']['gripper_base']['width']} ${config['link_properties']['gripper_base']['depth']} ${config['link_properties']['gripper_base']['height']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${config['link_properties']['gripper_base']['mass']}"/>
+      <inertia
+        ixx="${config['link_properties']['gripper_base']['mass'] * (config['link_properties']['gripper_base']['height']**2 + config['link_properties']['gripper_base']['depth']**2) / 12}"
+        iyy="${config['link_properties']['gripper_base']['mass'] * (config['link_properties']['gripper_base']['width']**2 + config['link_properties']['gripper_base']['height']**2) / 12}"
+        izz="${config['link_properties']['gripper_base']['mass'] * (config['link_properties']['gripper_base']['width']**2 + config['link_properties']['gripper_base']['depth']**2) / 12}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <joint name="gripper_finger_joint" type="prismatic">
+    <parent link="gripper_base_link"/>
+    <child link="gripper_finger_link"/>
+    <origin xyz="0 0.05 0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${config['gripper']['stroke_min']}"
+           upper="${config['gripper']['stroke_max']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="gripper_finger_link">
+    <visual>
+      <origin xyz="0 0 ${config['link_properties']['gripper_finger']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['gripper_finger']['width']} ${config['link_properties']['gripper_finger']['depth']} ${config['link_properties']['gripper_finger']['height']}"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${config['link_properties']['gripper_finger']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['gripper_finger']['width']} ${config['link_properties']['gripper_finger']['depth']} ${config['link_properties']['gripper_finger']['height']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${config['link_properties']['gripper_finger']['height']/2}" rpy="0 0 0"/>
+      <mass value="${config['gripper']['finger_mass']}"/>
+      <inertia
+        ixx="${config['gripper']['finger_mass'] * (config['link_properties']['gripper_finger']['height']**2 + config['link_properties']['gripper_finger']['depth']**2) / 12}"
+        iyy="${config['gripper']['finger_mass'] * (config['link_properties']['gripper_finger']['width']**2 + config['link_properties']['gripper_finger']['height']**2) / 12}"
+        izz="${config['gripper']['finger_mass'] * (config['link_properties']['gripper_finger']['width']**2 + config['link_properties']['gripper_finger']['depth']**2) / 12}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <joint name="gripper_finger2_joint" type="prismatic">
+    <parent link="gripper_base_link"/>
+    <child link="gripper_finger2_link"/>
+    <origin xyz="0 -0.05 0.05" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="${config['gripper']['stroke_min']}"
+           upper="${config['gripper']['stroke_max']}"
+           effort="${config['global']['default_max_effort']}"
+           velocity="${config['global']['default_max_velocity']}"/>
+  </joint>
+
+  <link name="gripper_finger2_link">
+    <visual>
+      <origin xyz="0 0 ${config['link_properties']['gripper_finger']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['gripper_finger']['width']} ${config['link_properties']['gripper_finger']['depth']} ${config['link_properties']['gripper_finger']['height']}"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${config['link_properties']['gripper_finger']['height']/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${config['link_properties']['gripper_finger']['width']} ${config['link_properties']['gripper_finger']['depth']} ${config['link_properties']['gripper_finger']['height']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${config['link_properties']['gripper_finger']['height']/2}" rpy="0 0 0"/>
+      <mass value="${config['gripper']['finger_mass']}"/>
+      <inertia
+        ixx="${config['gripper']['finger_mass'] * (config['link_properties']['gripper_finger']['height']**2 + config['link_properties']['gripper_finger']['depth']**2) / 12}"
+        iyy="${config['gripper']['finger_mass'] * (config['link_properties']['gripper_finger']['width']**2 + config['link_properties']['gripper_finger']['height']**2) / 12}"
+        izz="${config['gripper']['finger_mass'] * (config['link_properties']['gripper_finger']['width']**2 + config['link_properties']['gripper_finger']['depth']**2) / 12}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
 
 </robot>

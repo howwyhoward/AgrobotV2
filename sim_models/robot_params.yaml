@@ -1,0 +1,88 @@
+# ==========================================
+# AGROBOT V2 - PARAMETER CONFIGURATION
+# Units: meters (m), kilograms (kg), radians (rad)
+# ==========================================
+
+# 1. Global Defaults
+# Useful for setting baseline limits so you don't have to write them 6 times
+global:
+  default_max_effort: 50.0      # Newtons (prismatic) or Newton-meters (revolute)
+  default_max_velocity: 1.0     # m/s or rad/s
+
+# 2. Linear Rail (Prismatic Joint)
+rail:
+  track_length: 2.0             # Total length of the rail
+  travel_limit_min: 0.0
+  travel_limit_max: 1.8         # Max distance carriage can move
+
+# 3. Kinematic Chain (Joint Offsets)
+# These are the XYZ distances from one joint to the next.
+# Format: [X, Y, Z]
+arm_geometry:
+  rail_to_shoulder_yaw:   [0.0, 0.0,  0.10]   # Z-offset from carriage to base pivot
+  yaw_to_shoulder_pitch:  [0.0, 0.07, 0.15]   # Y=0.07 → shoulder side-mount offset
+  shoulder_to_elbow:      [0.0, -0.1, 0.40]   # Y=0.05 → forearm side-mounted on upper arm box
+  elbow_to_wrist_pitch:   [0.0, 0.04, 0.30]   # Y=0.04 → wrist side-mount on forearm
+  wrist_pitch_to_roll:    [0.0, 0.0,  0.10]   # Distance through the wrist mechanism
+  wrist_to_gripper:       [0.0, 0.0,  0.15]   # Distance to the center of the gripper
+
+# 4. Link Physical Properties (Mass & Visuals)
+# Used for inertial calculations and drawing basic cylinder/box shapes
+link_properties:
+  shoulder_base:
+    mass: 2.5
+    width: 0.12   # X dimension
+    depth: 0.10   # Y dimension
+    height: 0.15  # Z dimension
+  upper_arm:
+    mass: 3.0
+    width: 0.08   # X dimension
+    depth: 0.06   # Y dimension
+    height: 0.40  # Z dimension — should match shoulder_to_elbow Z-offset
+  forearm:
+    mass: 2.0
+    radius: 0.04
+    length: 0.30  # Should match elbow_to_wrist_pitch Z-offset
+  wrist:
+    mass: 0.8
+    radius: 0.03
+    length: 0.10
+  carriage:
+    mass: 5.0
+    width: 0.20
+    depth: 0.20
+    height: 0.05
+  gripper_base:
+    mass: 0.5
+    width: 0.10
+    depth: 0.10
+    height: 0.05
+  gripper_finger:
+    width: 0.02
+    depth: 0.02
+    height: 0.10
+
+# 5. Joint Limits (Range of Motion)
+# Given in Radians. (e.g., -1.57 to 1.57 is roughly -90 to +90 degrees)
+joint_limits:
+  shoulder_yaw:
+    lower: -3.14
+    upper: 3.14
+  shoulder_pitch:
+    lower: -1.57
+    upper: 1.57
+  elbow_pitch:
+    lower: -2.00
+    upper: 2.00
+  wrist_pitch:
+    lower: -1.57
+    upper: 1.57
+  wrist_roll:
+    lower: -3.14
+    upper: 3.14
+
+# 6. Gripper Properties (Assuming 1-DOF parallel jaw)
+gripper:
+  finger_mass: 0.2
+  stroke_min: 0.00       # Fully closed (meters)
+  stroke_max: 0.05       # Fully open (meters)
