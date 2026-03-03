@@ -75,9 +75,6 @@ COPY requirements.in requirements_lock.txt ./
 # (Debian packages). These have no pip RECORD file, so pip cannot upgrade them.
 # Rule: never pip-install what apt already provides in a ROS base image.
 #
-# We only pip-install packages that are NOT shipped by the ROS base:
-#   - ruff: fast Python linter, not in apt
-#
 # opencv is provided by ros-jazzy-vision-opencv (apt stage above) as python3-opencv.
 # numpy, pyyaml, pytest, rclpy all come from apt as well.
 # opencv-python-headless is intentionally excluded: it pulls numpy>=2 as a dep,
@@ -85,6 +82,21 @@ COPY requirements.in requirements_lock.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages \
     ruff
+
+# Sprint 2: PyTorch CPU wheels + SAM2.
+#
+# We use the CPU-only index (download.pytorch.org/whl/cpu) for two reasons:
+#   1. This container targets linux/arm64 — CUDA wheels do not exist for ARM64.
+#   2. MPS (Apple Metal) is a host-side API and cannot pass through Docker's
+#      Linux VM on Mac. CPU inference is correct for this container.
+#   Real GPU acceleration happens in Dockerfile.rocm (ROCm) and Dockerfile.cuda.
+#
+# torch.hub (used to load DINOv2) is included with torch — no separate package.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
+    torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    pip3 install --break-system-packages \
+    sam2
 
 # ─── Stage 3: Final Dev Image ─────────────────────────────────────────────────
 FROM python-deps AS dev

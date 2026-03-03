@@ -21,7 +21,7 @@ Data Flow
   [preprocess_for_dino] → float32 CHW tensor
       │
       ▼
-  [TomatoDetector.detect()]   ← Sprint 2: replace with DINOv2+SAM2
+  [DINOv2SAM2Detector.detect()]   ← Sprint 3: swap for MIGraphX ONNX on ROCm
       │
       ▼
   /agrobot/detections (vision_msgs/Detection2DArray)
@@ -74,6 +74,10 @@ from agrobot_perception.utils.image_utils import (
     preprocess_for_dino,
     draw_detection_overlay,
 )
+from agrobot_perception.detectors.dino_sam2_detector import (
+    DINOv2SAM2Detector,
+    _select_device,
+)
 
 
 # ─── QoS Profiles ─────────────────────────────────────────────────────────────
@@ -91,18 +95,14 @@ SENSOR_QOS = QoSProfile(
 class PlaceholderDetector:
     """Stub detector — returns zero detections.
 
-    This class has the exact interface that Sprint 2's DINOv2+SAM2 detector
-    will implement. Swapping the backend in Sprint 2 means:
-      1. Replace this class with `DINOv2SAM2Detector` in a new file.
-      2. Change the import in __init__ of TomatoDetectorNode.
-      3. Nothing else in the node changes.
+    Retained as a documented fallback. To revert to the stub:
+      self._detector = PlaceholderDetector()
 
     Returns:
         List of dicts: [{"box": [x1,y1,x2,y2], "score": float, "label": str}]
     """
 
     def detect(self, preprocessed_chw: np.ndarray) -> list[dict]:
-        # Sprint 2: replace with actual DINOv2 feature extraction + SAM2 prompting.
         return []
 
 
@@ -130,7 +130,12 @@ class TomatoDetectorNode(Node):
 
         # ── Core Components ───────────────────────────────────────────────────
         self._bridge = CvBridge()
-        self._detector = PlaceholderDetector()
+        # Sprint 2: DINOv2+SAM2 zero-shot detector.
+        # Sprint 3: swap for MIGraphX-optimized ONNX export (ROCm edge).
+        self._detector = DINOv2SAM2Detector(
+            device=_select_device(),
+            confidence_threshold=self._conf_threshold,
+        )
 
         # ── Subscribers ───────────────────────────────────────────────────────
         self._image_sub = self.create_subscription(

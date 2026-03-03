@@ -21,3 +21,15 @@
 #   ros-jazzy-vision-opencv (apt) already provides python3-opencv, and
 #   the pip wheel pulls numpy>=2 which conflicts with Debian's numpy 1.26.4.
 ruff>=0.4
+
+# ─── Sprint 2: DINOv2 + SAM2 inference ───────────────────────────────────────
+# PyTorch CPU wheels are used inside Dockerfile.dev (ARM64 Linux container).
+# MPS (Apple Metal) is used when running directly on the Mac host outside Docker.
+# The CUDA variant lives in Dockerfile.cuda; ROCm variant in Dockerfile.rocm.
+#
+# dinov2 is NOT listed here — it is loaded at runtime via torch.hub:
+#   torch.hub.load("facebookresearch/dinov2", "dinov2_vitb14")
+# torch.hub downloads and caches to ~/.cache/torch/hub/ on first call.
+torch>=2.3
+torchvision>=0.18
+sam2>=1.0

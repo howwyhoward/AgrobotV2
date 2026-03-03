@@ -53,6 +53,10 @@ services:
       # Speeds up `bazel build` when run inside Docker.
       - bazel_cache:/root/.cache/bazel
 
+      # Named volume for torch.hub model cache (DINOv2 weights ~330MB).
+      # Without this, DINOv2 re-downloads on every `--rm` container start.
+      - torch_hub_cache:/root/.cache/torch
+
     # ── Camera Hardware Passthrough ───────────────────────────────────────────
     # Exposes the USB bus so the Intel RealSense D456 is accessible inside the
     # container via the ros-jazzy-realsense2-camera driver.
@@ -121,4 +125,6 @@ volumes:
   ros2_build:
     driver: local
   bazel_cache:
+    driver: local
+  torch_hub_cache:
     driver: local

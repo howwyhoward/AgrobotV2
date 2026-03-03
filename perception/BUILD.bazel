@@ -35,6 +35,30 @@ py_library(
     ],
 )
 
+# ─── dino_sam2_detector: Sprint 2 Zero-Shot Detector ─────────────────────────
+#
+# DINOv2 feature extraction + SAM2 mask refinement.
+# deps on torch/torchvision: declared here so Bazel resolves them from the
+# pip lock file hermetically rather than using the system torch installation.
+#
+# Note: sam2 is NOT declared as a Bazel dep because it installs a `configs/`
+# directory that SAM2 locates via its own package path — Bazel's sandbox
+# isolates this differently. sam2 is installed via pip in Dockerfile.dev and
+# used at runtime through the Docker container (same pattern as rclpy).
+py_library(
+    name = "dino_sam2_detector",
+    srcs = [
+        "agrobot_perception/detectors/__init__.py",
+        "agrobot_perception/detectors/dino_sam2_detector.py",
+    ],
+    deps = [
+        ":image_utils",
+        "@agrobot_pip//torch",
+        "@agrobot_pip//torchvision",
+    ],
+    imports = ["."],
+)
+
 # ─── agrobot_perception_lib: Core Package Library ─────────────────────────────
 #
 # Bundles all Python source files in the package (excluding the node entry point).
@@ -45,7 +69,7 @@ py_library(
         "agrobot_perception/__init__.py",
         "agrobot_perception/utils/__init__.py",
     ],
-    deps = [":image_utils"],
+    deps = [":image_utils", ":dino_sam2_detector"],
     imports = ["."],
 )
 
@@ -67,9 +91,12 @@ py_binary(
     main = "agrobot_perception/tomato_detector_node.py",
     deps = [
         ":agrobot_perception_lib",
+        ":dino_sam2_detector",
         ":image_utils",
         "@agrobot_pip//numpy",
         "@agrobot_pip//opencv-python-headless",
+        "@agrobot_pip//torch",
+        "@agrobot_pip//torchvision",
     ],
     imports = ["."],
     # Only build this target on Linux (it requires ROS 2 at runtime).

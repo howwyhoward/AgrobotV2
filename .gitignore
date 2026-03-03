@@ -24,11 +24,12 @@ __pycache__/
 .env
 
 # Model weights (large binary files — use Git LFS or model_sync.sh instead)
-models/*.onnx
-models/*.pt
-models/*.pth
-models/*.bin
-models/*.safetensors
+# Recursive patterns cover subdirectories (e.g. models/sam2/*.pt)
+models/**/*.onnx
+models/**/*.pt
+models/**/*.pth
+models/**/*.bin
+models/**/*.safetensors
 !models/.gitkeep
 
 # SSH control sockets
