@@ -44,7 +44,7 @@
 
            Tailscale IPs (fill in when each machine joins the tailnet):
              - Local Mac   : 100.100.5.40          ← confirmed
-             - AMD edge    : 100.CCC.CCC.CCC        ← fill in after amd_edge_setup.sh
+             - AMD edge    : 100.78.233.101         ← nucbox, confirmed 2026-03-04
              NOTE: HPC Greene is NOT listed — it uses AnyConnect, not Tailscale.
 
            Port 17900 = DDS discovery server port for ROS_DOMAIN_ID=42
@@ -67,10 +67,10 @@
              Model artifacts are transferred Mac → AMD Edge via rsync over Tailscale
              after being pulled from HPC via scp over AnyConnect. -->
 
-        <!-- AMD Edge (real-time inference + robot) -->
+        <!-- AMD Edge (real-time inference + robot) — nucbox -->
         <locator>
           <udpv4>
-            <address>100.CCC.CCC.CCC</address>
+            <address>100.78.233.101</address>
             <port>17900</port>
           </udpv4>
         </locator>
@@ -115,7 +115,7 @@
           </locator>
           <locator>
             <udpv4>
-              <address>100.CCC.CCC.CCC</address>
+              <address>100.78.233.101</address>
               <port>17900</port>
             </udpv4>
           </locator>

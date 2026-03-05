@@ -12,9 +12,14 @@
 set -euo pipefail
 
 # NOTE: hpc-greene is NOT on the Tailscale mesh — it uses NYU AnyConnect VPN.
-# Only amd-edge is verified here. Greene connectivity is checked separately
+# Only the AMD edge is verified here. Greene connectivity is checked separately
 # via `ssh greene` (requires AnyConnect to be connected).
-PEERS=("amd-edge")
+#
+# Machine registered as "nucbox" (GMKtec EVO-X2, Tailscale IP: 100.78.233.101)
+# Username: robotics-club
+# Using IP directly — MagicDNS hostname resolution unreliable on Mac Tailscale client
+PEERS=("100.78.233.101")
+SSH_USER="robotics-club"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -43,7 +48,7 @@ echo ""
 echo "[3] SSH check (10s timeout)..."
 for peer in "${PEERS[@]}"; do
     if ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no \
-       "${peer}" "echo ok" &>/dev/null; then
+       "${SSH_USER}@${peer}" "echo ok" &>/dev/null; then
         echo "    ✓ ${peer} — SSH works"
     else
         echo "    ✗ ${peer} — SSH failed (check ~/.ssh/config or Tailscale SSH setting)"
@@ -54,7 +59,7 @@ echo ""
 # ── 4. ROS_DOMAIN_ID check ────────────────────────────────────────────────────
 echo "[4] ROS_DOMAIN_ID on peers (requires SSH + ROS 2 to be sourced)..."
 for peer in "${PEERS[@]}"; do
-    REMOTE_DOMAIN=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "${peer}" \
+    REMOTE_DOMAIN=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "${SSH_USER}@${peer}" \
         "echo \$ROS_DOMAIN_ID" 2>/dev/null || echo "unreachable")
     if [ "${REMOTE_DOMAIN}" = "42" ]; then
         echo "    ✓ ${peer} — ROS_DOMAIN_ID=42 ✓"

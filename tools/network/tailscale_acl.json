@@ -36,8 +36,16 @@
   },
 
   "acls": [
+    // ── Owner (untagged devices) → full access to robot ───────────────────
+    // The tailnet owner's Mac may not carry tag:dev in all client versions.
+    // autogroup:owner covers the account owner regardless of tag state.
+    {
+      "action": "accept",
+      "src":    ["autogroup:owner"],
+      "dst":    ["tag:robot:*"]
+    },
+
     // ── Dev machine (local Mac) → Robot: SSH + Foxglove Studio ────────────
-    // Ports are embedded in dst as "tag:22" — the current Tailscale format.
     // 22   = SSH
     // 9090 = rosbridge_websocket (Foxglove Studio visualization)
     {
@@ -52,7 +60,7 @@
     // Port range 7400-7500: standard DDS data traffic range
     {
       "action": "accept",
-      "src":    ["tag:dev", "tag:robot"],
+      "src":    ["tag:dev", "tag:robot", "autogroup:owner"],
       "dst":    ["tag:dev:17900-17910", "tag:dev:7400-7500",
                  "tag:robot:17900-17910", "tag:robot:7400-7500"]
     },
@@ -71,8 +79,14 @@
   //   amd-edge   → the AMD 96GB robot computer
 
   "ssh": [
-    // Allow SSH via Tailscale SSH (no separate key management needed).
-    // Only tag:dev → tag:robot — HPC is NOT on Tailscale (uses AnyConnect VPN).
+    // Allow Tailscale SSH: owner account → robot (covers untagged Mac).
+    {
+      "action": "accept",
+      "src":    ["autogroup:owner"],
+      "dst":    ["tag:robot"],
+      "users":  ["autogroup:nonroot", "root"]
+    },
+    // Allow tag:dev → robot as well for when the Mac carries the tag.
     {
       "action": "accept",
       "src":    ["tag:dev"],
