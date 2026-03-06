@@ -114,10 +114,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/rocm6.4 && \
     pip3 install --break-system-packages \
-    numpy \
     opencv-python-headless \
     pyyaml \
-    onnxruntime
+    "onnxruntime==1.19.2"
+# numpy and pyyaml are provided by Ubuntu 24.04 apt (numpy 1.26.4, pyyaml 6.0.1).
+# onnxruntime is pinned to 1.19.2 — the last release supporting numpy 1.x.
+# Newer onnxruntime versions require numpy>=2.0 which conflicts with the
+# Debian-managed numpy and cannot be pip-uninstalled.
 
 # ─── Stage 3: Final ROCm Image ────────────────────────────────────────────────
 FROM python-deps AS rocm
