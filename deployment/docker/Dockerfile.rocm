@@ -33,14 +33,8 @@
 #     --tag agrobot-tom-v2/rocm:latest \
 #     .
 #
-# Run:
-#   docker run --rm -it \
-#     --device=/dev/kfd \
-#     --device=/dev/dri \
-#     --group-add video \
-#     --group-add render \
-#     -v $(pwd):/workspace \
-#     agrobot-tom-v2/rocm:latest bash
+# Run (use script so host GPU GIDs are applied; base image has no "render"/"video" group):
+#   ./deployment/docker/run_rocm.sh [bash]
 ###############################################################################
 
 # ─── Stage 1: Ubuntu 24.04 + ROCm runtime + ROS 2 Jazzy ──────────────────────
