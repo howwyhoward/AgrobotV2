@@ -115,12 +115,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --index-url https://download.pytorch.org/whl/rocm6.4 && \
     pip3 install --break-system-packages \
     opencv-python-headless \
-    pyyaml \
-    "onnxruntime==1.19.2"
+    pyyaml
 # numpy and pyyaml are provided by Ubuntu 24.04 apt (numpy 1.26.4, pyyaml 6.0.1).
-# onnxruntime is pinned to 1.19.2 — the last release supporting numpy 1.x.
-# Newer onnxruntime versions require numpy>=2.0 which conflicts with the
-# Debian-managed numpy and cannot be pip-uninstalled.
+# onnxruntime is intentionally omitted here — all versions pull numpy>=2.0 as a
+# transitive dep, which conflicts with the Debian-managed numpy 1.26.4.
+# Sprint 3 adds ONNX export; onnxruntime will be handled there with a proper
+# isolated Python environment or a base image that includes numpy 2.x.
 
 # ─── Stage 3: Final ROCm Image ────────────────────────────────────────────────
 FROM python-deps AS rocm
