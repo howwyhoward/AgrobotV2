@@ -114,13 +114,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/rocm6.4 && \
     pip3 install --break-system-packages \
-    opencv-python-headless \
-    pyyaml
-# numpy and pyyaml are provided by Ubuntu 24.04 apt (numpy 1.26.4, pyyaml 6.0.1).
-# onnxruntime is intentionally omitted here — all versions pull numpy>=2.0 as a
-# transitive dep, which conflicts with the Debian-managed numpy 1.26.4.
-# Sprint 3 adds ONNX export; onnxruntime will be handled there with a proper
-# isolated Python environment or a base image that includes numpy 2.x.
+    sam2
+# apt over pip rule — never pip-install what the ROS apt stage already provides:
+#   numpy       → python3-numpy  1.26.4  (Ubuntu 24.04 base)
+#   pyyaml      → python3-yaml   6.0.1   (Ubuntu 24.04 base)
+#   opencv      → python3-opencv (ros-jazzy-cv-bridge dependency)
+# opencv-python-headless is excluded: it requires numpy>=2 which conflicts with
+# the Debian-managed numpy 1.26.4 (no RECORD file → pip cannot uninstall it).
+# onnxruntime is deferred to Sprint 3 (ONNX export) for the same numpy reason.
 
 # ─── Stage 3: Final ROCm Image ────────────────────────────────────────────────
 FROM python-deps AS rocm
