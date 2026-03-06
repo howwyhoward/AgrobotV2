@@ -14,7 +14,7 @@
 # Example:
 #   ./deployment/docker/run_rocm.sh
 #   ./deployment/docker/run_rocm.sh bash
-#   ./deployment/docker/run_rocm.sh ros2 launch perception perception.launch.py
+#   ./deployment/docker/run_rocm.sh ros2 launch agrobot_perception perception.launch.py
 ###############################################################################
 
 set -e
@@ -38,11 +38,17 @@ GROUP_ADD_ARGS=()
 [ -n "$KFD_GID" ] && GROUP_ADD_ARGS+=(--group-add "$KFD_GID")
 [ -n "$VIDEO_GID" ] && [ "$VIDEO_GID" != "$KFD_GID" ] && GROUP_ADD_ARGS+=(--group-add "$VIDEO_GID")
 
+# USB passthrough for Intel RealSense D456 (optional; no-op if /dev/bus/usb missing)
+VOLUME_ARGS=(-v "${REPO_ROOT}:/workspace")
+if [ -d /dev/bus/usb ]; then
+  VOLUME_ARGS+=(-v /dev/bus/usb:/dev/bus/usb)
+fi
+
 docker run --rm -it \
   --device=/dev/kfd \
   --device=/dev/dri \
   "${GROUP_ADD_ARGS[@]}" \
-  -v "${REPO_ROOT}:/workspace" \
+  "${VOLUME_ARGS[@]}" \
   -w /workspace \
   "$IMAGE" \
   "$@"
