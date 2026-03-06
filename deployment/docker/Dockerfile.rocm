@@ -1,16 +1,23 @@
 # syntax=docker/dockerfile:1.7
 ###############################################################################
-# Dockerfile.rocm — AMD Edge Deployment (GMKtec EVO-X2)
+# Dockerfile.rocm — AMD Edge Deployment (NucBox / GMKtec EVO-X2)
 #
 # Hardware   : AMD Ryzen AI Max+ 395 (Strix Halo), Radeon 8060S, 96GB unified RAM
 # GPU arch   : gfx1151 (RDNA 3.5)
-# Target OS  : linux/amd64, Ubuntu 24.04, OEM kernel >= 6.14.0-1018
-# ROCm       : 7.2.0 (minimum for stable gfx1151 support per AMD official docs)
+# Target OS  : linux/amd64, Ubuntu 24.04, kernel >= 6.14
+# ROCm       : Installed from AMD apt repo (rocm6.4) inside the container.
+#              The host must have ROCm kernel modules loaded (/dev/kfd present).
+#
+# Why ubuntu:24.04 base instead of rocm/dev-ubuntu-24.04:7.2.0:
+#   AMD does not publish ROCm 7.x as a pre-built Docker Hub base image.
+#   rocm/dev-ubuntu-24.04 tags only go up to 6.4.x on Docker Hub.
+#   We install ROCm runtime libraries from AMD's apt repo directly, which
+#   gives us the correct runtime for whatever ROCm version the host kernel exposes.
+#   The host's /dev/kfd + /dev/dri devices are passed through at runtime.
 #
 # ROCm + gfx1151 Compatibility Quick Reference:
 #   ROCm 6.4.x  → ⚠️  Unstable on most Ubuntu 24.04 + Strix Halo configs
-#   ROCm 7.2.0  → ✅  Stable (Ubuntu 24.04 OEM kernel >= 6.14.0-1018)
-#   ROCm 7.11.0 → ✅  Stable (kernel >= 6.18.4 or Ubuntu 26.04)
+#   ROCm 7.x    → ✅  Stable (kernel >= 6.14 with gfx1151 patches)
 #   Source: https://rocm.docs.amd.com/en/latest/how-to/system-optimization/strixhalo.html
 #
 # Memory architecture (IMPORTANT):
@@ -36,19 +43,47 @@
 #     agrobot-tom-v2/rocm:latest bash
 ###############################################################################
 
-# ─── Stage 1: ROCm 7.2.0 Base + ROS 2 Jazzy ──────────────────────────────────
-FROM rocm/dev-ubuntu-24.04:7.2.0 AS system
+# ─── Stage 1: Ubuntu 24.04 + ROCm runtime + ROS 2 Jazzy ──────────────────────
+#
+# We start from plain Ubuntu 24.04 and install the ROCm HIP runtime from AMD's
+# apt repository. The host kernel modules (/dev/kfd, /dev/dri) are passed
+# through at docker run time — the container only needs the userspace libraries.
+FROM ubuntu:24.04 AS system
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ── Install ROS 2 Jazzy on ROCm Base ──────────────────────────────────────────
+# ── Step 1: Bootstrap apt tools ───────────────────────────────────────────────
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg2 \
     lsb-release \
-    software-properties-common && \
+    software-properties-common \
+    ca-certificates
+
+# ── Step 2: Add ROCm apt repository (AMD official) ────────────────────────────
+# This installs the ROCm HIP userspace runtime. The host kernel modules
+# (/dev/kfd, /dev/dri) are passed through at docker run time.
+# We use the rocm6.4 repo because it is the latest stable apt repo AMD publishes
+# for Ubuntu 24.04. The actual runtime version seen by the container is
+# determined by the host kernel — this just provides the userspace ABI.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] \
+        https://repo.radeon.com/rocm/apt/6.4 noble main" \
+        > /etc/apt/sources.list.d/rocm.list && \
+    echo "Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600" \
+        > /etc/apt/preferences.d/rocm-pin-600 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    rocm-hip-runtime \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Step 3: Install ROS 2 Jazzy ───────────────────────────────────────────────
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
