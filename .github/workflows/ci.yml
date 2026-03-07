@@ -20,7 +20,7 @@ jobs:
       - name: Set up Bazel
         uses: bazel-contrib/setup-bazel@0.8.0
         with:
-          bazelisk-cache-enable: true
+          bazelisk-cache: true
 
       - name: Build perception
         run: bazel build //perception/...

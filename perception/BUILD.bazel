@@ -21,7 +21,7 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 # can depend on. Bazel tracks exactly which files it contains and verifies that
 # no target imports a library it didn't declare as a dep.
 #
-# deps on @agrobot_pip//numpy and @agrobot_pip//opencv-python-headless:
+# deps on @agrobot_pip//numpy and @agrobot_pip//opencv_python_headless:
 #   These are pip packages declared in MODULE.bazel. Bazel downloads them
 #   hermetically rather than using your system numpy/cv2 installation.
 #   This guarantees the same numpy version runs on your Mac AND on the HPC.
@@ -31,7 +31,7 @@ py_library(
     imports = ["."],  # Adds perception/ to sys.path so `from agrobot_perception...` works.
     deps = [
         "@agrobot_pip//numpy",
-        "@agrobot_pip//opencv-python-headless",
+        "@agrobot_pip//opencv_python_headless",
     ],
 )
 
@@ -94,7 +94,7 @@ py_binary(
         ":dino_sam2_detector",
         ":image_utils",
         "@agrobot_pip//numpy",
-        "@agrobot_pip//opencv-python-headless",
+        "@agrobot_pip//opencv_python_headless",
         "@agrobot_pip//torch",
         "@agrobot_pip//torchvision",
     ],
@@ -113,11 +113,12 @@ py_binary(
 py_test(
     name = "image_utils_test",
     size = "small",     # "small" = must complete in <60s. Enforced by Bazel.
+    main = "tests/test_image_utils.py",
     srcs = ["tests/test_image_utils.py"],
     deps = [
         ":image_utils",
         "@agrobot_pip//numpy",
-        "@agrobot_pip//opencv-python-headless",
+        "@agrobot_pip//opencv_python_headless",
         "@agrobot_pip//pytest",
     ],
     imports = ["."],

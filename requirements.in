@@ -20,6 +20,11 @@
 # opencv-python-headless is intentionally excluded here:
 #   ros-jazzy-vision-opencv (apt) already provides python3-opencv, and
 #   the pip wheel pulls numpy>=2 which conflicts with Debian's numpy 1.26.4.
+# We still add it below for Bazel hermetic build (CI and local); Docker does not
+# pip-install it and uses apt opencv at runtime.
+opencv-python-headless>=4.8
+# pytest: same — apt provides it in Docker; we add for Bazel/CI so //perception:image_utils_test resolves.
+pytest>=7.4
 ruff>=0.4
 
 # ─── Sprint 2: DINOv2 + SAM2 inference ───────────────────────────────────────

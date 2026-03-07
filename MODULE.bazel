@@ -44,8 +44,8 @@ python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 # Pin CPython 3.11 — this is what gets used for ALL Python targets in the repo.
 # Hermetic: Bazel downloads this exact interpreter, it does NOT use your system Python.
 python.toolchain(
-    python_version = "3.11",
     is_default = True,
+    python_version = "3.11",
 )
 
 # ─── Python Dependencies (pip) ────────────────────────────────────────────────
@@ -59,7 +59,6 @@ pip.parse(
     python_version = "3.11",
     requirements_lock = "//:requirements_lock.txt",
 )
-
 use_repo(pip, "agrobot_pip")
 
 # ─── OCI / Docker ─────────────────────────────────────────────────────────────
@@ -72,11 +71,10 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "ros2_jazzy_base",
     image = "docker.io/library/ros",
-    tag = "jazzy-ros-base",
     platforms = [
         "linux/amd64",
         "linux/arm64",
     ],
+    tag = "jazzy-ros-base",
 )
-
-use_repo(oci, "ros2_jazzy_base")
+use_repo(oci, "ros2_jazzy_base", "ros2_jazzy_base_linux_amd64", "ros2_jazzy_base_linux_arm64")

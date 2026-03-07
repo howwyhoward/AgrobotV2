@@ -21,6 +21,10 @@ hydra-core==1.3.2 \
     --hash=sha256:8a878ed67216997c3e9d88a8e72e7b4767e81af37afb4ea3334b269a4390a824 \
     --hash=sha256:fa0238a9e31df3373b35b0bfb672c34cc92718d21f81311d8996a16de1141d8b
     # via sam2
+iniconfig==2.3.0 \
+    --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
+    --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
+    # via pytest
 iopath==0.1.10 \
     --hash=sha256:3311c16a4d9137223e20f141655759933e1eda24f8bff166af834af3c645ef01
     # via sam2
@@ -201,16 +205,29 @@ numpy==2.4.2 \
     --hash=sha256:fcf92bee92742edd401ba41135185866f7026c502617f422eb432cfeca4fe236 \
     --hash=sha256:fd49860271d52127d61197bb50b64f58454e9f578cb4b2c001a6de8b1f50b0b1
     # via
+    #   opencv-python-headless
     #   sam2
     #   torchvision
 omegaconf==2.3.0 \
     --hash=sha256:7b4df175cdb08ba400f45cae3bdcae7ba8365db4d165fc65fd04b050ab63b46b \
     --hash=sha256:d5d4b6d29955cc50ad50c46dc269bcd92c6e00f5f90d23ab5fee7bfca4ba4cc7
     # via hydra-core
+opencv-python-headless==4.13.0.92 \
+    --hash=sha256:0525a3d2c0b46c611e2130b5fdebc94cf404845d8fa64d2f3a3b679572a5bd22 \
+    --hash=sha256:0bd48544f77c68b2941392fcdf9bcd2b9cdf00e98cb8c29b2455d194763cf99e \
+    --hash=sha256:1a7d040ac656c11b8c38677cc8cccdc149f98535089dbe5b081e80a4e5903209 \
+    --hash=sha256:3e0a6f0a37994ec6ce5f59e936be21d5d6384a4556f2d2da9c2f9c5dc948394c \
+    --hash=sha256:5c8cfc8e87ed452b5cecb9419473ee5560a989859fe1d10d1ce11ae87b09a2cb \
+    --hash=sha256:77a82fe35ddcec0f62c15f2ba8a12ecc2ed4207c17b0902c7a3151ae29f37fb6 \
+    --hash=sha256:a7cf08e5b191f4ebb530791acc0825a7986e0d0dee2a3c491184bd8599848a4b \
+    --hash=sha256:eb60e36b237b1ebd40a912da5384b348df8ed534f6f644d8e0b4f103e272ba7d
+    # via -r requirements.in
 packaging==26.0 \
     --hash=sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4 \
     --hash=sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529
-    # via hydra-core
+    # via
+    #   hydra-core
+    #   pytest
 pillow==12.1.1 \
     --hash=sha256:02f84dfad02693676692746df05b89cf25597560db2857363a208e393429f5e9 \
     --hash=sha256:0330d233c1a0ead844fc097a7d16c0abff4c12e856c0b325f231820fee1f39da \
@@ -306,10 +323,22 @@ pillow==12.1.1 \
     # via
     #   sam2
     #   torchvision
+pluggy==1.6.0 \
+    --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
+    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
+    # via pytest
 portalocker==3.2.0 \
     --hash=sha256:1f3002956a54a8c3730586c5c77bf18fae4149e07eaf1c29fc3faf4d5a3f89ac \
     --hash=sha256:3cdc5f565312224bc570c49337bd21428bba0ef363bbcf58b9ef4a9f11779968
     # via iopath
+pygments==2.19.2 \
+    --hash=sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887 \
+    --hash=sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b
+    # via pytest
+pytest==9.0.2 \
+    --hash=sha256:711ffd45bf766d5264d487b917733b453d917afd2b0ad65223959f59089f875b \
+    --hash=sha256:75186651a92bd89611d1d9fc20f0b4345fd827c41ccd5c299a868a05d70edf11
+    # via -r requirements.in
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
     --hash=sha256:0150219816b6a1fa26fb4699fb7daa9caf09eb1999f3b70fb6e786805e80375a \
