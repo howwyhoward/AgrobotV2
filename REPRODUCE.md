@@ -51,10 +51,10 @@ selection until Sprint 3 (MIGraphX path compiles natively for gfx1151).
 
 ```bash
 # [NUCBOX] inside ROCm container
-AGROBOT_FORCE_CPU=1 PYTHONPATH=perception python3 perception/eval/run_eval.py \
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception python3 perception/eval/run_eval.py \
   --val-list data/val_list.txt --confidence 0.2
 
-AGROBOT_FORCE_CPU=1 PYTHONPATH=perception python3 perception/eval/run_eval.py \
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception python3 perception/eval/run_eval.py \
   --val-list data/val_list.txt --confidence 0.2 --detector dino_only
 ```
 
@@ -66,17 +66,19 @@ AGROBOT_FORCE_CPU=1 PYTHONPATH=perception python3 perception/eval/run_eval.py \
 
 ## Recorded runs (Laboro Tomato val, 161 images)
 
-| Config | Device | Frames | Mean (ms) | p99 (ms) | Detections |
-|--------|--------|--------|-----------|----------|------------|
-| dino_sam2, conf=0.3 | Mac Docker (CPU) | 159 | 820 | 1487 | 0 |
-| dino_sam2, conf=0.2 | NucBox Docker (CPU) | 159 | 361 | 395 | 0 |
-| dino_only, conf=0.2 | NucBox Docker (CPU) | 159 | 365 | 397 | 0 |
+| Config | Device | Frames | Mean (ms) | p99 (ms) | Detections | Notes |
+|--------|--------|--------|-----------|----------|------------|-------|
+| dino_sam2, conf=0.3 | Mac Docker (CPU) | 159 | 820 | 1487 | 0 | First run, cold model load |
+| dino_sam2, conf=0.2 | NucBox Docker (CPU) | 159 | 361 | 395 | 0 | SAM2 not loaded (ckpt missing) |
+| dino_only, conf=0.2 | NucBox Docker (CPU) | 159 | 365 | 397 | 0 | SAM2 not loaded |
+| dino_sam2, conf=0.2 | NucBox Docker (CPU, SAM2 loaded) | 159 | 345 | 384 | 0 | `HIP_VISIBLE_DEVICES=""` |
+| dino_only, conf=0.2 | NucBox Docker (CPU, SAM2 loaded) | 159 | 362 | 395 | 0 | `HIP_VISIBLE_DEVICES=""` |
 
-**Ablation note (zero-shot):** `dino_sam2` and `dino_only` show near-identical latency because SAM2 was not loaded (checkpoint absent). Latency delta will be meaningful once `models/sam2/sam2.1_hiera_small.pt` is present. Add the post-SAM2 row below when available.
+**Ablation note (zero-shot baseline):** With 0 detections, `dino_sam2` appears faster than `dino_only` because SAM2's `set_image` + `predict` calls are only invoked when proposals exist. The true per-detection SAM2 overhead will be measurable after fine-tuning (Sprint 2.6) produces real detections. Expect SAM2 to add ~50–150 ms per frame on CPU once detections are non-zero.
 
-**Zero detections:** Zero-shot uses a hardcoded red/orange RGB prior. The Laboro Tomato val set includes green/yellow fruit, variable lighting, and partial occlusion — the prior does not match enough DINOv2 patches above threshold at conf=0.2. This is the expected pre-fine-tuning baseline. Detection counts and mAP will be populated after Sprint 2.6 (SAM2 fine-tuning on NucBox).
+**Zero detections explained:** The zero-shot query is built from 4 hardcoded red/orange RGB patches. Laboro Tomato val includes green/yellow tomatoes, variable lighting, and partial occlusion — the cosine similarity of those patches against the red/orange prior falls below 0.2 on all 159 frames. This is the expected pre-fine-tuning baseline. Sprint 2.6 replaces the hardcoded prior with a mean embedding computed from the Laboro Tomato training set.
 
-**Sprint 3 target:** ROCm + MIGraphX inference on NucBox. Expected: <33 ms mean (>30 FPS). Add that row here when Sprint 3 eval runs.
+**Sprint 3 target:** ROCm + MIGraphX inference on NucBox (gfx1151 native). Expected: <33 ms mean (>30 FPS). The CPU baseline of ~350 ms = the "before" in the optimization story.
 
 ## Updating this file
 
