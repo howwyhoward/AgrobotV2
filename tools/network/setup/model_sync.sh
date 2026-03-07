@@ -18,7 +18,7 @@
 set -euo pipefail
 
 LOCAL_MODELS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/models"
-NUCBOX_HOST="${NUCBOX_HOST:-amd-edge}"
+NUCBOX_HOST="${NUCBOX_HOST:-nucbox}"
 NUCBOX_MODELS_DIR="${NUCBOX_MODELS_DIR:-AgrobotV2/models}"
 
 mkdir -p "${LOCAL_MODELS_DIR}"
