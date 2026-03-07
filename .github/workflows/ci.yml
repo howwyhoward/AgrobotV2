@@ -1,7 +1,12 @@
 # Agrobot TOM v2 — CI
 #
-# Runs on every push and PR. Ensures perception builds and unit tests pass.
-# Bazel fetches deps hermetically; no Docker in CI for speed (Mac and Linux runners).
+# Builds and tests pure-Python targets (no torch/CUDA deps).
+#
+# Why not //perception/...?
+#   dino_sam2_detector transitively pulls torch, which on Linux resolves CUDA
+#   wheels (nvidia_nvtx_cu12, etc.) that aren't in our Mac-generated CPU lock
+#   file. Until we maintain per-platform lock files, we scope CI to the targets
+#   that work hermetically on any runner: image_utils (numpy + opencv only).
 
 name: CI
 
@@ -22,8 +27,8 @@ jobs:
         with:
           bazelisk-cache: true
 
-      - name: Build perception
-        run: bazel build //perception/...
+      - name: Build image_utils
+        run: bazel build //perception:image_utils
 
       - name: Run perception unit tests
         run: bazel test //perception:image_utils_test --test_output=errors
