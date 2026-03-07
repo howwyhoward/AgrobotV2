@@ -74,8 +74,11 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception python3 percept
 | dino_only, conf=0.2 | NucBox Docker (CPU) | 159 | 365 | 397 | 0 | SAM2 not loaded |
 | dino_sam2, conf=0.2 | NucBox Docker (CPU, SAM2 loaded) | 159 | 345 | 384 | 0 | `HIP_VISIBLE_DEVICES=""` |
 | dino_only, conf=0.2 | NucBox Docker (CPU, SAM2 loaded) | 159 | 362 | 395 | 0 | `HIP_VISIBLE_DEVICES=""` |
+| dino_sam2, conf=0.3 | NucBox Docker (CPU, data-driven embedding) | 159 | 1032 | 1262 | **1439** | S2.6 query embedding from 643 train images |
 
-**Ablation note (zero-shot baseline):** With 0 detections, `dino_sam2` appears faster than `dino_only` because SAM2's `set_image` + `predict` calls are only invoked when proposals exist. The true per-detection SAM2 overhead will be measurable after fine-tuning (Sprint 2.6) produces real detections. Expect SAM2 to add ~50–150 ms per frame on CPU once detections are non-zero.
+**Ablation note (zero-shot baseline):** With 0 detections, `dino_sam2` appears faster than `dino_only` because SAM2's `set_image` + `predict` calls are only invoked when proposals exist. With detections present (post S2.6), SAM2 adds ~670 ms per frame on CPU (345 ms → 1032 ms). That overhead disappears in Sprint 3 with MIGraphX on ROCm.
+
+**S2.6 result:** Replacing the 4 hardcoded RGB patches with a mean embedding from 136,655 tomato patches across 643 training images produced **1,439 detections** on 159 val frames at conf=0.3. The prior was the problem, not the architecture.
 
 **Zero detections explained:** The zero-shot query is built from 4 hardcoded red/orange RGB patches. Laboro Tomato val includes green/yellow tomatoes, variable lighting, and partial occlusion — the cosine similarity of those patches against the red/orange prior falls below 0.2 on all 159 frames. This is the expected pre-fine-tuning baseline. Sprint 2.6 replaces the hardcoded prior with a mean embedding computed from the Laboro Tomato training set.
 
