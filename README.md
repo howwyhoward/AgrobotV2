@@ -28,6 +28,8 @@ ros2 run agrobot_perception tomato_detector --ros-args -p publish_debug_image:=f
 ```
 
 ---
+## [NUCBOX] from ~/AgrobotV2
+./deployment/docker/run_rocm.sh bash
 
 ## Repo Structure
 

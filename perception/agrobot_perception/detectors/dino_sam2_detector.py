@@ -93,7 +93,14 @@ def _select_device() -> torch.device:
 
     MPS is checked first so Mac host runs (outside Docker) use the GPU.
     Inside the Docker container on Mac, MPS is unavailable and CPU is used.
+
+    Set AGROBOT_FORCE_CPU=1 to bypass GPU selection entirely.
+    Required on NucBox (gfx1151/Strix Halo) until Sprint 3 MIGraphX path is
+    in place — the pre-built ROCm 6.4 PyTorch wheels target discrete RDNA 3
+    (gfx1100) and fault on gfx1151 unified memory.
     """
+    if os.environ.get("AGROBOT_FORCE_CPU", "0") == "1":
+        return torch.device("cpu")
     if torch.backends.mps.is_available():
         return torch.device("mps")
     if torch.cuda.is_available():
