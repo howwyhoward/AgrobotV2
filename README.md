@@ -2,7 +2,7 @@
 
 Autonomous tomato-picking robot perception pipeline built on ROS 2 Jazzy, Bazel, and Docker.
 
-**Full design doc & roadmap:** [Google Doc](https://docs.google.com/document/d/1PyNI9mKTuDRYljvWCO47Ucky7pXPXgNRf4o25j-nc1A/edit?usp=sharing)  
+**Roadmap:** [docs/PROJECT_ROADMAP.md](docs/PROJECT_ROADMAP.md) · **Sprint checklist:** [docs/GRAND_PLAN.md](docs/GRAND_PLAN.md) · **Reproduce eval numbers:** [REPRODUCE.md](REPRODUCE.md)
 
 ---
 
@@ -33,14 +33,16 @@ ros2 run agrobot_perception tomato_detector --ros-args -p publish_debug_image:=f
 
 ```
 AgrobotV2/
-├── docs/               # Grand plan, failure modes
-├── perception/          # ROS 2 tomato detection node (DINOv2 + SAM2)
-├── planning/            # Robot arm motion planning
-├── simulation/          # Isaac Sim / Replicator SDG (deferred; NVIDIA-only)
+├── docs/               # Grand plan, roadmap, failure modes (Sprint 3)
+├── perception/         # ROS 2 tomato detection node (DINOv2 + SAM2)
+├── planning/           # Robot arm motion planning (Sprint 4)
+├── simulation/         # Isaac Sim / Replicator SDG (deferred; NVIDIA-only)
+├── data/               # val_list.txt, README; large datasets gitignored
+├── models/             # Model weights (gitignored); see models/README.md
 ├── deployment/
-│   ├── docker/          # Dockerfile.dev · Dockerfile.rocm
-│   └── compose/         # docker-compose for local dev
+│   ├── docker/         # Dockerfile.dev · Dockerfile.rocm
+│   └── compose/        # docker-compose for local dev
 └── tools/
-    ├── platforms/       # Bazel platform targets (Mac, ROCm)
-    └── network/         # Tailscale ACL + ROS 2 DDS unicast profile
+    ├── platforms/      # Bazel platform targets (Mac, ROCm)
+    └── network/        # Tailscale ACL + ROS 2 DDS unicast profile
 ```
