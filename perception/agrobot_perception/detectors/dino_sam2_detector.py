@@ -69,6 +69,9 @@ _DEFAULT_SAM2_CKPT = "models/sam2/sam2.1_hiera_small.pt"
 # Config path is relative to the sam2 package root (not the repo root).
 # build_sam2() resolves this via Hydra's pkg://sam2 search path.
 _DEFAULT_SAM2_CFG = "configs/sam2.1/sam2.1_hiera_s.yaml"
+# Data-driven query embedding built by perception/tools/build_query_embedding.py.
+# When present, replaces the hardcoded RGB prior below.
+_DEFAULT_QUERY_EMBEDDING = "models/query_embedding.pt"
 
 # DINOv2 ViT-B/14: patch_size=14, embed_dim=768, image_size=518 → 37×37 patches.
 _DINO_MODEL_NAME = "dinov2_vitb14"
@@ -218,15 +221,29 @@ class DINOv2SAM2Detector:
             self._sam2_predictor = None
 
     def _build_query_embedding(self) -> None:
-        """Build the tomato query embedding from RGB colour priors.
+        """Build the tomato query embedding.
 
-        We create small synthetic patches of tomato-like colours and run them
-        through DINOv2 to get their feature embeddings. The mean of these
-        embeddings becomes our query vector for cosine similarity search.
+        Priority:
+          1. Load from models/query_embedding.pt if present (built by
+             perception/tools/build_query_embedding.py from Laboro Tomato
+             training patches). This gives data-driven, colour-agnostic features.
+          2. Fall back to the hardcoded red/orange RGB prior (zero-shot baseline).
 
-        Sprint 3: replace with mean embedding computed from Laboro Tomato
-        training images after SAM2 fine-tuning.
+        The file-based embedding replaces the prior permanently once generated.
+        Sprint 3: recompute after SAM2 fine-tuning for further improvement.
         """
+        query_path = self._repo_root / _DEFAULT_QUERY_EMBEDDING
+        if query_path.exists():
+            query = torch.load(str(query_path), map_location=self._device)
+            self._query_embedding = F.normalize(query.float(), dim=0)
+            logger.info("Loaded data-driven query embedding from %s.", query_path)
+            return
+
+        logger.info(
+            "No query embedding at %s. Using hardcoded RGB prior. "
+            "Run perception/tools/build_query_embedding.py to build a better one.",
+            query_path,
+        )
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 

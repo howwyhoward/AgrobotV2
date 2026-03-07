@@ -10,7 +10,8 @@ How to reproduce evaluation numbers for the Agrobot TOM v2 perception pipeline.
 ## Model weights
 
 - **DINOv2:** Fetched automatically by `torch.hub` on first run; cached under `~/.cache/torch/hub/`.
-- **SAM2:** Place `sam2.1_hiera_small.pt` at `models/sam2/sam2.1_hiera_small.pt`. See [models/README.md](models/README.md).
+- **SAM2:** Place `sam2.1_hiera_small.pt` at `models/sam2/sam2.1_hiera_small.pt`. Download from `https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt`.
+- **Query embedding:** Built from Laboro Tomato training set by `perception/tools/build_query_embedding.py`. Saved to `models/query_embedding.pt`. If absent, detector falls back to hardcoded RGB prior (zero detections on most real images).
 
 ## Validation set
 
@@ -83,3 +84,40 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception python3 percept
 ## Updating this file
 
 After running eval on your val set, paste the actual numbers here so others can compare.
+
+---
+
+## S2.6 — Build data-driven query embedding
+
+Run once to replace the hardcoded RGB prior with a mean DINOv2 patch embedding
+computed from the 643 Laboro Tomato training images. Takes ~5–8 min on CPU.
+
+```bash
+# [NUCBOX] inside ROCm container (or [MAC] host)
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
+  python3 perception/tools/build_query_embedding.py \
+  --train-images data/Laboro-Tomato/train/images \
+  --train-labels data/Laboro-Tomato/train/labels \
+  --output models/query_embedding.pt
+```
+
+Smoke-test with 10 images first to confirm it runs:
+
+```bash
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
+  python3 perception/tools/build_query_embedding.py \
+  --train-images data/Laboro-Tomato/train/images \
+  --train-labels data/Laboro-Tomato/train/labels \
+  --output models/query_embedding.pt \
+  --max-images 10
+```
+
+After building, re-run eval — you should see non-zero detections:
+
+```bash
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
+  python3 perception/eval/run_eval.py \
+  --val-list data/val_list.txt --confidence 0.3
+```
+
+Add the result row to the Recorded runs table above.
