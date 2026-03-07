@@ -3,7 +3,6 @@
 Autonomous tomato-picking robot perception pipeline built on ROS 2 Jazzy, Bazel, and Docker.
 
 **Full design doc & roadmap:** [Google Doc](https://docs.google.com/document/d/1PyNI9mKTuDRYljvWCO47Ucky7pXPXgNRf4o25j-nc1A/edit?usp=sharing)  
-**Step-by-step sprint plan:** [docs/GRAND_PLAN.md](docs/GRAND_PLAN.md)
 
 ---
 

@@ -38,6 +38,11 @@ models/**/*.safetensors
 # OS
 .DS_Store
 
+# Docs (kept local; reference external roadmap)
+docs/
+
 # Dataset assets (download separately; see data/README.md)
+data/Laboro-Tomato/
+data/kutomadata/
 data/Laboro-Tomato/
 data/kutomadata/
