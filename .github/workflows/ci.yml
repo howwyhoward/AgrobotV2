@@ -1,0 +1,29 @@
+# Agrobot TOM v2 — CI
+#
+# Runs on every push and PR. Ensures perception builds and unit tests pass.
+# Bazel fetches deps hermetically; no Docker in CI for speed (Mac and Linux runners).
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@0.8.0
+        with:
+          bazelisk-cache-enable: true
+
+      - name: Build perception
+        run: bazel build //perception/...
+
+      - name: Run perception unit tests
+        run: bazel test //perception:image_utils_test --test_output=errors

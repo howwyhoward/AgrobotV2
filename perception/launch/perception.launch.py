@@ -43,6 +43,17 @@ def generate_launch_description() -> LaunchDescription:
                     "realsense2_camera ROS 2 driver topic for the Intel D456.",
     )
 
+    depth_topic_arg = DeclareLaunchArgument(
+        "depth_topic",
+        default_value="",
+        description="Optional. Aligned depth image for 3D. Empty = disabled.",
+    )
+    depth_camera_info_arg = DeclareLaunchArgument(
+        "depth_camera_info_topic",
+        default_value="",
+        description="Optional. CameraInfo for depth.",
+    )
+
     # ── Tomato Detector Node ───────────────────────────────────────────────────
     tomato_detector_node = Node(
         package="agrobot_perception",
@@ -62,6 +73,8 @@ def generate_launch_description() -> LaunchDescription:
                 "publish_debug_image": LaunchConfiguration("publish_debug_image"),
                 "input_width": 518,
                 "input_height": 518,
+                "depth_topic": LaunchConfiguration("depth_topic"),
+                "depth_camera_info_topic": LaunchConfiguration("depth_camera_info_topic"),
             }
         ],
     )
@@ -71,6 +84,8 @@ def generate_launch_description() -> LaunchDescription:
             conf_threshold_arg,
             publish_debug_arg,
             camera_topic_arg,
+            depth_topic_arg,
+            depth_camera_info_arg,
             tomato_detector_node,
         ]
     )

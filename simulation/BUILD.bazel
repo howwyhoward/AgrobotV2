@@ -1,14 +1,15 @@
 ###############################################################################
 # simulation/BUILD.bazel
 #
-# Sprint 2: NVIDIA Replicator SDG (Synthetic Data Generation) scripts.
-# These run on the NYU HPC Greene cluster via Isaac Sim.
+# Isaac Sim / Replicator SDG scripts are deferred (NVIDIA-only; no ROCm support).
+# If HPC (Greene) access is restored, targets here would run there via Singularity.
+# For the 2-machine stack, training uses real + augmented data on NucBox (ROCm).
 #
-# Target example (Sprint 2):
+# Target example (when Isaac Sim / HPC is re-enabled):
 #   py_binary(
 #       name = "replicator_tomato_scene",
 #       srcs = ["replicator/tomato_scene.py"],
-#       target_compatible_with = ["@platforms//os:linux", "//tools/platforms:cuda"],
+#       target_compatible_with = ["@platforms//os:linux"],
 #   )
 ###############################################################################
 

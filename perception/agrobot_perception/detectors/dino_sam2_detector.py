@@ -136,10 +136,12 @@ class DINOv2SAM2Detector:
         sam2_checkpoint: Optional[str] = None,
         confidence_threshold: float = 0.3,
         max_detections: int = 20,
+        use_sam2: bool = True,
     ) -> None:
         self._device = device or _select_device()
         self._conf_threshold = confidence_threshold
         self._max_detections = max_detections
+        self._use_sam2 = use_sam2
         self._repo_root = _find_repo_root()
 
         self._dino: Optional[torch.nn.Module] = None
@@ -178,8 +180,11 @@ class DINOv2SAM2Detector:
         self._dino.to(self._device)
         logger.info("DINOv2 loaded.")
 
-        if not self._sam2_ckpt.exists():
-            logger.warning(
+        if not self._sam2_ckpt.exists() or not self._use_sam2:
+            if not self._use_sam2:
+                logger.info("SAM2 disabled (use_sam2=False). DINOv2-only mode.")
+            else:
+                logger.warning(
                 "SAM2 checkpoint not found at %s. "
                 "Download sam2.1_hiera_small.pt from "
                 "https://github.com/facebookresearch/sam2/releases "

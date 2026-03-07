@@ -16,23 +16,14 @@
   //   Ephemeral range        = 32768–60999 (Linux default)
   //   We open 17900-17910 for DDS discovery + a unicast data range.
 
-  // ── NETWORK TOPOLOGY NOTE ─────────────────────────────────────────────────
-  // NYU HPC Greene is accessed via Cisco AnyConnect VPN (NYU-NET).
-  // AnyConnect is hub-and-spoke and conflicts with Tailscale's WireGuard UDP.
-  // Greene compute nodes also have no direct internet egress.
-  //
-  // RESULT: HPC is NOT on the Tailscale mesh. It is accessed exclusively via:
-  //   - SSH over AnyConnect VPN (interactive)
-  //   - scp/rsync over AnyConnect (model artifact transfer)
-  //
-  // Only local Mac ↔ AMD Edge require Tailscale (for live ROS 2 DDS).
+  // ── NETWORK TOPOLOGY ───────────────────────────────────────────────────────
+  // Two-machine stack: Mac ↔ NucBox over Tailscale. No HPC on the mesh.
   // ──────────────────────────────────────────────────────────────────────────
 
   "tagOwners": {
     "tag:dev":      ["autogroup:owner"],  // local Mac (AI/Systems engineer machine)
-    "tag:robot":    ["autogroup:owner"],  // AMD edge robot computer
+    "tag:robot":    ["autogroup:owner"],  // NucBox (AMD 96GB, training + inference)
     "tag:ci":       ["autogroup:owner"]   // Future: CI/CD runner
-    // tag:hpc intentionally omitted — HPC uses AnyConnect, not Tailscale
   },
 
   "acls": [
@@ -76,7 +67,7 @@
   // MagicDNS is configured in the Tailscale admin panel → DNS tab (not in this file).
   // Recommended machine names to set via Machines → Edit name:
   //   local-mac  → the AI/Systems engineer's development machine
-  //   amd-edge   → the AMD 96GB robot computer
+  //   amd-edge   → NucBox (AMD 96GB robot computer, training + inference)
 
   "ssh": [
     // Allow Tailscale SSH: owner account → robot (covers untagged Mac).

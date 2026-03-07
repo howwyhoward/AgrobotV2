@@ -37,3 +37,7 @@ models/**/*.safetensors
 
 # OS
 .DS_Store
+
+# Dataset assets (download separately; see data/README.md)
+data/Laboro-Tomato/
+data/kutomadata/

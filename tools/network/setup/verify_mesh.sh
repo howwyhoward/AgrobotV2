@@ -2,8 +2,8 @@
 ###############################################################################
 # verify_mesh.sh — Verify Tailscale Mesh Connectivity
 #
-# Run on your Mac AFTER all three machines have joined the tailnet.
-# This script pings all peers and checks ROS 2 DDS reachability.
+# Run on your Mac. Two-machine stack: Mac ↔ NucBox. Pings peers and checks
+# ROS 2 DDS reachability.
 #
 # Usage (Mac terminal):
 #   bash tools/network/setup/verify_mesh.sh
@@ -11,11 +11,7 @@
 
 set -euo pipefail
 
-# NOTE: hpc-greene is NOT on the Tailscale mesh — it uses NYU AnyConnect VPN.
-# Only the AMD edge is verified here. Greene connectivity is checked separately
-# via `ssh greene` (requires AnyConnect to be connected).
-#
-# Machine registered as "nucbox" (GMKtec EVO-X2, Tailscale IP: 100.78.233.101)
+# NucBox (GMKtec EVO-X2). Update PEERS if your tailnet uses a different IP.
 # Username: robotics-club
 # Using IP directly — MagicDNS hostname resolution unreliable on Mac Tailscale client
 PEERS=("100.78.233.101")
@@ -70,4 +66,4 @@ done
 echo ""
 
 echo "Verification complete."
-echo "If all peers are reachable and ROS_DOMAIN_ID=42, you are ready for Sprint 2."
+echo "If the peer is reachable and ROS_DOMAIN_ID=42, you are ready for Sprint 2."

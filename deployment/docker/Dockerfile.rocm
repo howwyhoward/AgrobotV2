@@ -109,7 +109,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/rocm6.4 && \
     pip3 install --break-system-packages \
-    sam2
+    sam2 && \
+    pip3 install --break-system-packages \
+    hydra-core iopath datasets
+# SAM2 training (Sprint 2 on NucBox): hydra-core/iopath used by Meta's training scripts.
+# datasets: HuggingFace dataset loading for Laboro Tomato / KUTomaData.
+# submitit omitted — single-node training on NucBox, no SLURM.
 # apt over pip rule — never pip-install what the ROS apt stage already provides:
 #   numpy       → python3-numpy  1.26.4  (Ubuntu 24.04 base)
 #   pyyaml      → python3-yaml   6.0.1   (Ubuntu 24.04 base)

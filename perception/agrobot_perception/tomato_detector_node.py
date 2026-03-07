@@ -42,6 +42,8 @@ Parameters
   input_width           int     Model input width in pixels (default: 518)
   input_height          int     Model input height in pixels (default: 518)
   publish_debug_image   bool    Whether to publish annotated debug frames (default: True)
+  depth_topic           string  Optional. Aligned depth for 3D (default: "" = disabled)
+  depth_camera_info_topic string Optional. CameraInfo for depth (default: "")
 """
 
 from __future__ import annotations
@@ -55,9 +57,16 @@ from rclpy.qos import (
     QoSDurabilityPolicy,
 )
 
-from sensor_msgs.msg import Image
-from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
+from sensor_msgs.msg import Image, CameraInfo
+from vision_msgs.msg import (
+    Detection2DArray,
+    Detection2D,
+    Detection3DArray,
+    Detection3D,
+    ObjectHypothesisWithPose,
+)
 from std_msgs.msg import Header
+from geometry_msgs.msg import Point
 
 import cv2
 import numpy as np
@@ -120,6 +129,8 @@ class TomatoDetectorNode(Node):
         self.declare_parameter("input_width", 518)
         self.declare_parameter("input_height", 518)
         self.declare_parameter("publish_debug_image", True)
+        self.declare_parameter("depth_topic", "")
+        self.declare_parameter("depth_camera_info_topic", "")
 
         self._conf_threshold = self.get_parameter("confidence_threshold").value
         self._input_size = (
@@ -127,6 +138,10 @@ class TomatoDetectorNode(Node):
             self.get_parameter("input_height").value,
         )
         self._publish_debug = self.get_parameter("publish_debug_image").value
+        self._depth_topic = self.get_parameter("depth_topic").value
+        self._depth_info_topic = self.get_parameter("depth_camera_info_topic").value
+        self._depth_image: np.ndarray | None = None
+        self._depth_K: tuple[float, float, float, float] | None = None
 
         # ── Core Components ───────────────────────────────────────────────────
         self._bridge = CvBridge()
@@ -144,6 +159,20 @@ class TomatoDetectorNode(Node):
             self._image_callback,
             SENSOR_QOS,
         )
+
+        if self._depth_topic and self._depth_info_topic:
+            self._depth_sub = self.create_subscription(
+                Image, self._depth_topic, self._depth_callback, SENSOR_QOS
+            )
+            self._depth_info_sub = self.create_subscription(
+                CameraInfo,
+                self._depth_info_topic,
+                self._depth_info_callback,
+                10,
+            )
+            self._detections_3d_pub = self.create_publisher(
+                Detection3DArray, "/agrobot/detections_3d", 10
+            )
 
         # ── Publishers ────────────────────────────────────────────────────────
         self._detections_pub = self.create_publisher(
@@ -185,6 +214,11 @@ class TomatoDetectorNode(Node):
 
         # Publish structured detections.
         self._publish_detections(detections, msg.header)
+
+        if self._depth_image is not None and self._depth_K is not None and detections:
+            self._publish_detections_3d(
+                detections, msg.header, bgr_frame.shape, self._input_size
+            )
 
         # Publish annotated debug image if enabled.
         if self._publish_debug:
@@ -237,6 +271,69 @@ class TomatoDetectorNode(Node):
         debug_msg = self._bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
         debug_msg.header = header
         self._debug_pub.publish(debug_msg)
+
+    def _depth_callback(self, msg: Image) -> None:
+        try:
+            self._depth_image = self._bridge.imgmsg_to_cv2(
+                msg, desired_encoding="passthrough"
+            )
+        except Exception:
+            self._depth_image = None
+
+    def _depth_info_callback(self, msg: CameraInfo) -> None:
+        K = msg.k
+        if len(K) >= 6:
+            self._depth_K = (float(K[0]), float(K[4]), float(K[2]), float(K[5]))
+
+    def _publish_detections_3d(
+        self,
+        detections: list[dict],
+        header: Header,
+        color_shape: tuple,
+        input_size: tuple[int, int],
+    ) -> None:
+        if self._depth_image is None or self._depth_K is None:
+            return
+        fx, fy, cx, cy = self._depth_K
+        h, w = color_shape[:2]
+        iw, ih = input_size
+        scale = min(iw / w, ih / h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        pad_x = (iw - new_w) // 2
+        pad_y = (ih - new_h) // 2
+
+        array_3d = Detection3DArray()
+        array_3d.header = header
+
+        for det in detections:
+            x1, y1, x2, y2 = det["box"]
+            cx_518 = (x1 + x2) / 2.0
+            cy_518 = (y1 + y2) / 2.0
+            u_orig = (cx_518 - pad_x) / scale
+            v_orig = (cy_518 - pad_y) / scale
+            u_int = int(round(u_orig))
+            v_int = int(round(v_orig))
+            if u_int < 0 or u_int >= self._depth_image.shape[1] or v_int < 0 or v_int >= self._depth_image.shape[0]:
+                continue
+            z = float(self._depth_image[v_int, u_int])
+            if z <= 0 or not np.isfinite(z):
+                continue
+            x_cam = (u_orig - cx) * z / fx
+            y_cam = (v_orig - cy) * z / fy
+
+            d3 = Detection3D()
+            d3.header = header
+            d3.bbox.center.position.x = x_cam
+            d3.bbox.center.position.y = y_cam
+            d3.bbox.center.position.z = z
+            hyp = ObjectHypothesisWithPose()
+            hyp.hypothesis.class_id = det["label"]
+            hyp.hypothesis.score = float(det["score"])
+            d3.results.append(hyp)
+            array_3d.detections.append(d3)
+
+        if array_3d.detections:
+            self._detections_3d_pub.publish(array_3d)
 
 
 def main(args=None) -> None:

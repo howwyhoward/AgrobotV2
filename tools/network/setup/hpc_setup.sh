@@ -2,6 +2,13 @@
 ###############################################################################
 # hpc_setup.sh — NYU HPC Greene Access Setup (AnyConnect VPN)
 #
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ HPC ACCESS NOT AVAILABLE — use NucBox for training.                       │
+# │ This script is kept for when/if NYU Greene access is restored.            │
+# │ Training + inference: run on NucBox (ROCm). See amd_edge_setup.sh        │
+# │ and model_sync.sh --pull to get artifacts from NucBox to Mac.            │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
 # WHY NO TAILSCALE ON HPC:
 #   NYU HPC Greene requires Cisco AnyConnect VPN (NYU-NET Traffic Only).
 #   AnyConnect routes all traffic through NYU's servers and blocks WireGuard
