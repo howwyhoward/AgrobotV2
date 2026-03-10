@@ -73,7 +73,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         > /etc/apt/preferences.d/rocm-pin-600 && \
     apt-get update && apt-get install -y --no-install-recommends \
     rocm-hip-runtime \
+    migraphx \
     && rm -rf /var/lib/apt/lists/*
+# migraphx: AMD's graph compiler for ONNX → native GCN/RDNA kernels.
+# Provides migraphx-driver (benchmark/compile CLI) and the Python bindings
+# used by the Sprint 3 MIGraphX inference path.
 
 # ── Step 3: Install ROS 2 Jazzy ───────────────────────────────────────────────
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
