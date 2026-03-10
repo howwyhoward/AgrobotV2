@@ -22,7 +22,7 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --detector dino_only
 ```
 
-> **NucBox env vars required:** `AGROBOT_FORCE_CPU=1` bypasses GPU selection (pre-built ROCm 6.4 wheels fault on gfx1151 unified memory). `HIP_VISIBLE_DEVICES=""` prevents SAM2's HIP kernels from initialising. Both are CPU-only workarounds until Sprint 3 (MIGraphX).
+> **NucBox env vars required:** `AGROBOT_FORCE_CPU=1` bypasses GPU selection. `HIP_VISIBLE_DEVICES=""` prevents SAM2's HIP kernels from initialising. Both are CPU-only workarounds. GPU path blocked by kernel conflict — see [docs/SPRINT3_ROCM_UPGRADE.md](docs/SPRINT3_ROCM_UPGRADE.md).
 
 ---
 
