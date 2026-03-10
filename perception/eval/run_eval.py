@@ -79,6 +79,13 @@ def main() -> None:
         help="Optional: write per-image detections to CSV.",
     )
     parser.add_argument(
+        "--sam2-checkpoint",
+        type=Path,
+        default=None,
+        help="Optional: path to a fine-tuned SAM2 checkpoint. "
+             "Overrides the default models/sam2/sam2.1_hiera_small.pt.",
+    )
+    parser.add_argument(
         "--warmup",
         type=int,
         default=2,
@@ -120,9 +127,16 @@ def main() -> None:
 
     # Load detector (dino_only = no SAM2 refinement)
     use_sam2 = args.detector == "dino_sam2"
+    sam2_ckpt = None
+    if args.sam2_checkpoint:
+        sam2_ckpt = str(
+            args.sam2_checkpoint if args.sam2_checkpoint.is_absolute()
+            else repo_root / args.sam2_checkpoint
+        )
     detector = DINOv2SAM2Detector(
         device=_select_device(),
         confidence_threshold=args.confidence,
+        sam2_checkpoint=sam2_ckpt,
         use_sam2=use_sam2,
     )
     input_size = (518, 518)

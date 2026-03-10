@@ -212,6 +212,17 @@ class DINOv2SAM2Detector:
             # build_sam2 resolves cfg via Hydra pkg://sam2 search path —
             # pass only the relative path within the sam2 package, not absolute.
             sam2_model = build_sam2(_DEFAULT_SAM2_CFG, str(self._sam2_ckpt), device=self._device)
+
+            # If a fine-tuned state dict exists alongside the base checkpoint
+            # (same path with _finetuned suffix, or explicit override), load it.
+            # This keeps the loading interface clean — base weights always load
+            # first so the model is valid even if fine-tuning was partial.
+            finetuned_path = self._sam2_ckpt.parent / "sam2_tomato_finetuned.pt"
+            if finetuned_path.exists():
+                state_dict = torch.load(str(finetuned_path), map_location=self._device)
+                sam2_model.load_state_dict(state_dict)
+                logger.info("Loaded fine-tuned SAM2 weights from %s.", finetuned_path)
+
             self._sam2_predictor = SAM2ImagePredictor(sam2_model)
             logger.info("SAM2 loaded from %s.", self._sam2_ckpt)
         except Exception as exc:
