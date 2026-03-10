@@ -5,19 +5,19 @@
 # Hardware   : AMD Ryzen AI Max+ 395 (Strix Halo), Radeon 8060S, 96GB unified RAM
 # GPU arch   : gfx1151 (RDNA 3.5)
 # Target OS  : linux/amd64, Ubuntu 24.04, kernel >= 6.14
-# ROCm       : Installed from AMD apt repo (rocm6.4) inside the container.
+# ROCm       : 7.2.0 — first stable release with native gfx1151 support.
 #              The host must have ROCm kernel modules loaded (/dev/kfd present).
 #
-# Why ubuntu:24.04 base instead of rocm/dev-ubuntu-24.04:7.2.0:
+# Why ubuntu:24.04 base instead of rocm/dev-ubuntu-24.04:
 #   AMD does not publish ROCm 7.x as a pre-built Docker Hub base image.
-#   rocm/dev-ubuntu-24.04 tags only go up to 6.4.x on Docker Hub.
-#   We install ROCm runtime libraries from AMD's apt repo directly, which
-#   gives us the correct runtime for whatever ROCm version the host kernel exposes.
+#   We install from AMD's apt repo directly so we control the exact version.
 #   The host's /dev/kfd + /dev/dri devices are passed through at runtime.
 #
-# ROCm + gfx1151 Compatibility Quick Reference:
-#   ROCm 6.4.x  → ⚠️  Unstable on most Ubuntu 24.04 + Strix Halo configs
-#   ROCm 7.x    → ✅  Stable (kernel >= 6.14 with gfx1151 patches)
+# ROCm + gfx1151 Compatibility:
+#   ROCm 6.4.x  → ❌  Broken on gfx1151 — pre-compiled HIP kernels target
+#                      gfx1100 (discrete RDNA 3) and fault on Strix Halo's
+#                      unified memory controller (ROCm/ROCm#5824)
+#   ROCm 7.2.x  → ✅  Native gfx1151 support, unified memory GTT fixed
 #   Source: https://rocm.docs.amd.com/en/latest/how-to/system-optimization/strixhalo.html
 #
 # Memory architecture (IMPORTANT):
@@ -56,28 +56,26 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     software-properties-common \
     ca-certificates
 
-# ── Step 2: Add ROCm apt repository (AMD official) ────────────────────────────
-# This installs the ROCm HIP userspace runtime. The host kernel modules
-# (/dev/kfd, /dev/dri) are passed through at docker run time.
-# We use the rocm6.4 repo because it is the latest stable apt repo AMD publishes
-# for Ubuntu 24.04. The actual runtime version seen by the container is
-# determined by the host kernel — this just provides the userspace ABI.
+# ── Step 2: Add ROCm 7.2 apt repository (AMD official) ───────────────────────
+# ROCm 7.2 is the first release with native gfx1151 (Strix Halo) support.
+# ROCm 6.4 pre-compiled kernels target gfx1100 (discrete RDNA 3) and fault
+# on gfx1151's unified memory controller — do NOT revert to 6.4.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key \
         | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg && \
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] \
-        https://repo.radeon.com/rocm/apt/6.4 noble main" \
+        https://repo.radeon.com/rocm/apt/7.2 noble main" \
         > /etc/apt/sources.list.d/rocm.list && \
     echo "Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600" \
         > /etc/apt/preferences.d/rocm-pin-600 && \
     apt-get update && apt-get install -y --no-install-recommends \
     rocm-hip-runtime \
     migraphx \
+    rocm-smi-lib \
     && rm -rf /var/lib/apt/lists/*
-# migraphx: AMD's graph compiler for ONNX → native GCN/RDNA kernels.
-# Provides migraphx-driver (benchmark/compile CLI) and the Python bindings
-# used by the Sprint 3 MIGraphX inference path.
+# migraphx: AMD's graph compiler — ONNX → native gfx1151 kernels (Sprint 3).
+# rocm-smi-lib: provides rocm-smi for GPU memory/utilisation reporting.
 
 # ── Step 3: Install ROS 2 Jazzy ───────────────────────────────────────────────
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -102,16 +100,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # ─── Stage 2: Python + PyTorch ROCm ──────────────────────────────────────────
 FROM system AS python-deps
 
-# PyTorch for ROCm 6.4 wheels — these are the latest stable wheels compatible
-# with ROCm 7.x containers (PyTorch does not yet publish separate rocm7.x wheels;
-# rocm6.4-compiled wheels work because the HIP runtime ABI is forward-compatible).
+# PyTorch for ROCm 7.0 wheels — the latest wheels PyTorch publishes that align
+# with the ROCm 7.x ABI. PyTorch does not publish rocm7.2 wheels yet; rocm7.0
+# wheels are forward-compatible with the ROCm 7.2 runtime.
 #
-# Sprint 3 will evaluate TheRock nightly builds (gfx1151-native) for maximum
-# throughput. For now, rocm6.4 wheels are the safe baseline.
+# Note: PyTorch GPU tensors still require AGROBOT_FORCE_CPU=1 workaround until
+# PyTorch ships gfx1151-compiled kernels. GPU inference in Sprint 3 uses
+# MIGraphX directly (system package above), not PyTorch GPU paths.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages \
     torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/rocm6.4 && \
+    --index-url https://download.pytorch.org/whl/rocm7.0 && \
     pip3 install --break-system-packages \
     sam2 && \
     pip3 install --break-system-packages \
@@ -151,8 +150,8 @@ ENV PATH=/opt/rocm/bin:${PATH}
 # (SIGBUS / "Page not present") on gfx1151's unified memory architecture.
 # Source: https://github.com/ROCm/ROCm/issues/5824
 #
-# With ROCm 7.2.0 + kernel >= 6.14.0-1018, gfx1151 should be auto-detected.
-# This override is kept as a safety fallback for edge cases.
+# With ROCm 7.2.0 + kernel >= 6.14, gfx1151 is auto-detected by the runtime.
+# This override is kept as a safety fallback in case auto-detection fails.
 ENV HSA_OVERRIDE_GFX_VERSION=11.5.1
 
 # GPU_MAX_HW_QUEUES: Number of hardware compute queues exposed to ROCm.
