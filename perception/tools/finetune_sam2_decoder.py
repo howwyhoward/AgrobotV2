@@ -198,6 +198,67 @@ def load_dataset(
     return pairs
 
 
+def _run_decoder_with_grad(
+    sam2_model: "torch.nn.Module",
+    image_embed: "torch.Tensor",
+    high_res_feats: "list | None",
+    box_tensor: "torch.Tensor",
+    device: "torch.device",
+) -> "torch.Tensor":
+    """Call SAM2 prompt encoder + mask decoder directly, keeping gradients.
+
+    Why not use predictor.predict():
+      SAM2ImagePredictor.predict() is decorated with @torch.no_grad() and
+      returns numpy arrays. Both break the computation graph — torch.from_numpy()
+      on the returned logits has no grad_fn, so .backward() fails.
+
+    Instead we call sub-components directly:
+      1. sam_prompt_encoder (frozen) — no_grad, encodes the box prompt
+      2. sam_mask_decoder (trainable) — gradients flow here
+
+    Args:
+        sam2_model: The SAM2 model with frozen encoder, trainable decoder.
+        image_embed: Cached image embeddings from set_image() — (1, C, H, W).
+        high_res_feats: Optional list of high-res feature maps from the encoder.
+        box_tensor: (1, 4) float32 tensor [x1, y1, x2, y2] in 518×518 coords.
+        device: Inference device.
+
+    Returns:
+        logit: (518, 518) float32 tensor WITH grad_fn attached.
+    """
+    # Prompt encoder is frozen — no grad needed.
+    with torch.no_grad():
+        sparse_emb, dense_emb = sam2_model.sam_prompt_encoder(
+            points=None,
+            boxes=box_tensor,   # (1, 4) xyxy
+            masks=None,
+        )
+
+    # Mask decoder — gradients flow through here.
+    # Return signature: (low_res_masks, iou_predictions, sam_tokens_out, obj_score_logits)
+    # low_res_masks: (1, num_masks, H/4, W/4)
+    decoder_out = sam2_model.sam_mask_decoder(
+        image_embeddings=image_embed,
+        image_pe=sam2_model.sam_prompt_encoder.get_dense_pe(),
+        sparse_prompt_embeddings=sparse_emb,
+        dense_prompt_embeddings=dense_emb,
+        multimask_output=False,
+        repeat_image=False,
+        high_res_features=high_res_feats,
+    )
+    low_res_masks = decoder_out[0]  # (1, 1, H/4, W/4)
+
+    # Upsample to 518×518 — must use bilinear (not nearest) to keep grad_fn.
+    logit = F.interpolate(
+        low_res_masks.float(),
+        size=(_INPUT_SIZE, _INPUT_SIZE),
+        mode="bilinear",
+        align_corners=False,
+    ).squeeze(0).squeeze(0)  # (518, 518) WITH grad_fn
+
+    return logit
+
+
 def train(
     pairs: list[tuple[Path, Path]],
     sam2_ckpt: Path,
@@ -216,7 +277,7 @@ def train(
 
     # Freeze image encoder and prompt encoder — only train mask decoder.
     for name, param in sam2_model.named_parameters():
-        if "image_encoder" in name or "prompt_encoder" in name:
+        if "image_encoder" in name or "sam_prompt_encoder" in name:
             param.requires_grad_(False)
         else:
             param.requires_grad_(True)
@@ -228,7 +289,10 @@ def train(
         trainable, total, 100.0 * (1 - trainable / total),
     )
 
+    # predictor.set_image() handles image preprocessing and encoder forward pass.
+    # We use it only to cache image embeddings — then call the decoder directly.
     predictor = SAM2ImagePredictor(sam2_model)
+
     optimizer = torch.optim.AdamW(
         [p for p in sam2_model.parameters() if p.requires_grad],
         lr=lr,
@@ -259,9 +323,13 @@ def train(
             if not lines:
                 continue
 
-            # Set image once — image encoder runs here (frozen, no grad)
+            # Image encoder forward pass — frozen, no grad needed.
             with torch.no_grad():
                 predictor.set_image(rgb_hwc)
+
+            # Cache image embeddings for reuse across all boxes in this image.
+            image_embed   = predictor._features["image_embed"]      # (1, C, H, W)
+            high_res_feats = predictor._features.get("high_res_feats")  # list or None
 
             image_loss = torch.tensor(0.0, device=device)
             n_boxes = 0
@@ -276,27 +344,15 @@ def train(
                 gt_mask_np = _make_gt_mask(x1, y1, x2, y2)
                 gt_mask = torch.from_numpy(gt_mask_np).to(device)
 
-                box_np = np.array([[x1, y1, x2, y2]], dtype=np.float32)
-
-                # predict() runs mask decoder — gradients flow here
-                masks, scores, logits = predictor.predict(
-                    box=box_np,
-                    multimask_output=False,
-                    return_logits=True,
+                # (1, 4) box tensor — prompt encoder expects xyxy float
+                box_tensor = torch.tensor(
+                    [[x1, y1, x2, y2]], dtype=torch.float32, device=device
                 )
 
-                if logits is None or len(logits) == 0:
-                    continue
-
-                # logits shape: (1, H, W) — squeeze to (H, W)
-                logit = torch.from_numpy(logits[0]).to(device)
-                if logit.shape != gt_mask.shape:
-                    logit = F.interpolate(
-                        logit.unsqueeze(0).unsqueeze(0).float(),
-                        size=gt_mask.shape,
-                        mode="bilinear",
-                        align_corners=False,
-                    ).squeeze()
+                # Decoder forward with grad — this is where training happens.
+                logit = _run_decoder_with_grad(
+                    sam2_model, image_embed, high_res_feats, box_tensor, device
+                )
 
                 loss = _combined_loss(logit, gt_mask)
                 image_loss = image_loss + loss
