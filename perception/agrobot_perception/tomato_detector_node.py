@@ -30,23 +30,31 @@ Data Flow
 Topics
 ------
   Subscribed:
-    /camera/image_raw       sensor_msgs/Image   Raw camera frames
+    /camera/image_raw                         sensor_msgs/Image   Raw camera frames
+    <depth_topic>                             sensor_msgs/Image   Aligned depth (optional)
+    <depth_camera_info_topic>                 sensor_msgs/CameraInfo (optional)
 
   Published:
-    /agrobot/detections     vision_msgs/Detection2DArray
-    /agrobot/debug_image    sensor_msgs/Image   Annotated frame (debug only)
+    /agrobot/detections                       vision_msgs/Detection2DArray
+    /agrobot/detections_3d                    vision_msgs/Detection3DArray (when depth enabled)
+    /agrobot/safe_to_pick                     std_msgs/Bool  False = no pick this cycle
+    /agrobot/debug_image                      sensor_msgs/Image (debug only)
 
 Parameters
 ----------
-  confidence_threshold  float   Minimum detection confidence (default: 0.5)
-  input_width           int     Model input width in pixels (default: 518)
-  input_height          int     Model input height in pixels (default: 518)
-  publish_debug_image   bool    Whether to publish annotated debug frames (default: True)
-  depth_topic           string  Optional. Aligned depth for 3D (default: "" = disabled)
-  depth_camera_info_topic string Optional. CameraInfo for depth (default: "")
+  confidence_threshold    float   Minimum detection confidence (default: 0.5)
+  input_width             int     Model input width in pixels (default: 518)
+  input_height            int     Model input height in pixels (default: 518)
+  publish_debug_image     bool    Whether to publish annotated debug frames (default: True)
+  depth_topic             string  Optional. Aligned depth for 3D (default: "" = disabled)
+  depth_camera_info_topic string  Optional. CameraInfo for depth (default: "")
+  watchdog_timeout_ms     int     Publish empty detections if no frame within this window.
+                                  0 = disabled. (default: 2000)
 """
 
 from __future__ import annotations
+
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -58,6 +66,7 @@ from rclpy.qos import (
 )
 
 from sensor_msgs.msg import Image, CameraInfo
+from std_msgs.msg import Bool, Header
 from vision_msgs.msg import (
     Detection2DArray,
     Detection2D,
@@ -65,7 +74,6 @@ from vision_msgs.msg import (
     Detection3D,
     ObjectHypothesisWithPose,
 )
-from std_msgs.msg import Header
 from geometry_msgs.msg import Point
 
 import cv2
@@ -131,6 +139,10 @@ class TomatoDetectorNode(Node):
         self.declare_parameter("publish_debug_image", True)
         self.declare_parameter("depth_topic", "")
         self.declare_parameter("depth_camera_info_topic", "")
+        # Watchdog: if no camera frame arrives within this window, publish
+        # empty detections and safe_to_pick=False (FM-1 in FAILURE_MODES.md).
+        # Set to 0 to disable the watchdog entirely.
+        self.declare_parameter("watchdog_timeout_ms", 2000)
 
         self._conf_threshold = self.get_parameter("confidence_threshold").value
         self._input_size = (
@@ -142,6 +154,8 @@ class TomatoDetectorNode(Node):
         self._depth_info_topic = self.get_parameter("depth_camera_info_topic").value
         self._depth_image: np.ndarray | None = None
         self._depth_K: tuple[float, float, float, float] | None = None
+        self._watchdog_timeout_ms: int = self.get_parameter("watchdog_timeout_ms").value
+        self._last_frame_time: float = 0.0
 
         # ── Core Components ───────────────────────────────────────────────────
         self._bridge = CvBridge()
@@ -178,7 +192,14 @@ class TomatoDetectorNode(Node):
         self._detections_pub = self.create_publisher(
             Detection2DArray,
             "/agrobot/detections",
-            10,  # QoS depth
+            10,
+        )
+        # safe_to_pick: False when no detections or watchdog triggered.
+        # The arm planner subscribes here to gate pick attempts.
+        self._safe_to_pick_pub = self.create_publisher(
+            Bool,
+            "/agrobot/safe_to_pick",
+            10,
         )
 
         if self._publish_debug:
@@ -188,39 +209,74 @@ class TomatoDetectorNode(Node):
                 1,
             )
 
+        # ── Watchdog timer ────────────────────────────────────────────────────
+        if self._watchdog_timeout_ms > 0:
+            self._watchdog_timer = self.create_timer(
+                self._watchdog_timeout_ms / 1000.0,
+                self._watchdog_callback,
+            )
+            self.get_logger().info(
+                f"Watchdog enabled: safe_to_pick=False if no frame "
+                f"in {self._watchdog_timeout_ms} ms."
+            )
+
         self.get_logger().info(
             f"TomatoDetectorNode initialized. "
             f"conf_threshold={self._conf_threshold}, "
             f"input_size={self._input_size}"
         )
 
+    def _watchdog_callback(self) -> None:
+        """Fires if no camera frame has arrived within watchdog_timeout_ms.
+
+        Publishes empty detections + safe_to_pick=False so the planner gets
+        an explicit signal rather than silence. See FM-1 in docs/FAILURE_MODES.md.
+        """
+        if self._last_frame_time == 0.0:
+            # Node just started, no frame ever received yet — don't alarm.
+            return
+
+        elapsed_ms = (time.monotonic() - self._last_frame_time) * 1000.0
+        if elapsed_ms >= self._watchdog_timeout_ms:
+            self.get_logger().warn(
+                f"No camera frame for {elapsed_ms:.0f} ms "
+                f"(timeout={self._watchdog_timeout_ms} ms). "
+                "Publishing empty detections — safe_to_pick=False. "
+                "Check /camera/image_raw and the RealSense driver.",
+                throttle_duration_sec=1.0,
+            )
+            self._publish_detections([], Header())
+            self._publish_safe_to_pick(False)
+
+    def _publish_safe_to_pick(self, safe: bool) -> None:
+        msg = Bool()
+        msg.data = safe
+        self._safe_to_pick_pub.publish(msg)
+
     def _image_callback(self, msg: Image) -> None:
         """Called for every incoming camera frame."""
+        self._last_frame_time = time.monotonic()
+
         try:
-            # Convert ROS Image message → OpenCV BGR numpy array.
             bgr_frame = self._bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as e:
             self.get_logger().error(f"cv_bridge conversion failed: {e}")
             return
 
-        # Preprocess: BGR → RGB → letterbox → normalize → CHW float32.
         preprocessed = preprocess_for_dino(bgr_frame, input_size=self._input_size)
-
-        # Run detection (stub for now, DINOv2+SAM2 in Sprint 2).
         raw_detections = self._detector.detect(preprocessed)
-
-        # Filter by confidence threshold.
         detections = [d for d in raw_detections if d["score"] >= self._conf_threshold]
 
-        # Publish structured detections.
         self._publish_detections(detections, msg.header)
+        # Explicit safe_to_pick signal every frame — planner doesn't need to
+        # infer from detection count; it reads this directly.
+        self._publish_safe_to_pick(len(detections) > 0)
 
         if self._depth_image is not None and self._depth_K is not None and detections:
             self._publish_detections_3d(
                 detections, msg.header, bgr_frame.shape, self._input_size
             )
 
-        # Publish annotated debug image if enabled.
         if self._publish_debug:
             self._publish_debug_image(bgr_frame, detections, msg.header)
 
