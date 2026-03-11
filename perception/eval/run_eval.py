@@ -90,6 +90,13 @@ def main() -> None:
              "Overrides the default models/sam2/sam2.1_hiera_small.pt.",
     )
     parser.add_argument(
+        "--amg-points",
+        type=int,
+        default=8,
+        help="SAM2 AMG points_per_side (default 8 → 64 proposals). "
+             "16 → 256 proposals, better recall, ~4x slower.",
+    )
+    parser.add_argument(
         "--warmup",
         type=int,
         default=2,
@@ -144,6 +151,7 @@ def main() -> None:
             device=_select_device(),
             sam2_checkpoint=sam2_ckpt,
             confidence_threshold=args.confidence,
+            points_per_side=args.amg_points,
         )
     else:
         use_sam2 = args.detector == "dino_sam2"
