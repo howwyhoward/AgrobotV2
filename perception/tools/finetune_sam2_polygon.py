@@ -314,8 +314,10 @@ def train(
                 orig_w, orig_h = rec["orig_w"], rec["orig_h"]
                 rgb_hwc, scale, pad_x, pad_y = _letterbox_rgb(bgr)
 
+                logging.disable(logging.INFO)
                 with torch.no_grad():
                     predictor.set_image(rgb_hwc)
+                logging.disable(logging.NOTSET)
 
                 image_embed    = predictor._features["image_embed"]
                 high_res_feats = predictor._features.get("high_res_feats")
