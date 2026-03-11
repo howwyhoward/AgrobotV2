@@ -85,8 +85,9 @@ python3 perception/tools/build_val_gt_csv.py \
 | S3.2 | MIGraphX GPU | NucBox ROCm 6.4 | — | — | — | — | **Blocked**: kernel ABI conflict, needs ROCm 7.3 |
 | S3.3a (rect proxy) | dino_sam2, conf=0.3 | NucBox CPU | 876 | 1094 | — | **0.0000** | Rect mask fine-tune, overfit (loss→0.012) |
 | S3.3b (polygon) | dino_sam2, conf=0.3 | NucBox CPU | 876 | 1094 | — | **0.0000** | Polygon fine-tune, still overfit |
-| **S3.4 sam2_amg** | sam2_amg, conf=0.3 | NucBox CPU | 2017 | 2493 | — | **0.0222** | SAM2 proposes, DINOv2 scores — first real mAP |
-| S3 target | sam2_amg + MIGraphX | NucBox ROCm 7.x | **<100** | **<100** | TBD | **>0.10** | After ROCm 7.3 + points_per_side=16 |
+| **S3.4a sam2_amg** | sam2_amg, pts=8, conf=0.3 | NucBox CPU | 2017 | 2493 | — | **0.0222** | First real mAP — prec=0.19, rec=0.13 |
+| **S3.4b sam2_amg** | sam2_amg, pts=12, conf=0.2 | NucBox CPU | 3665 | 4321 | — | **0.0233** | More proposals — prec=0.14, rec=0.20 |
+| S3 target | sam2_amg + MIGraphX | NucBox ROCm 7.x | **<100** | **<100** | TBD | **>0.15** | pts=32 (1024 proposals) after ROCm 7.3 |
 
 ### Reading the S3.0 mAP result
 
