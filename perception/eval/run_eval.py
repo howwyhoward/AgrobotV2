@@ -62,9 +62,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--detector",
-        choices=["dino_sam2", "dino_only"],
+        choices=["dino_sam2", "dino_only", "sam2_amg"],
         default="dino_sam2",
-        help="dino_sam2 = DINOv2 + SAM2 refinement; dino_only = DINOv2 proposals only.",
+        help=(
+            "dino_sam2 = DINOv2 proposals + SAM2 refinement (default); "
+            "dino_only = DINOv2 proposals only; "
+            "sam2_amg = SAM2 AMG proposals scored by DINOv2 (architecturally correct)."
+        ),
     )
     parser.add_argument(
         "--confidence",
@@ -105,6 +109,7 @@ def main() -> None:
     import cv2
 
     # Build val image paths
+
     val_list_path = args.val_list if args.val_list.is_absolute() else repo_root / args.val_list
     if not val_list_path.exists():
         print(f"ERROR: Val list not found: {val_list_path}", file=sys.stderr)
@@ -125,20 +130,29 @@ def main() -> None:
         print("No image paths in val list. Add paths to data/val_list.txt.", file=sys.stderr)
         sys.exit(1)
 
-    # Load detector (dino_only = no SAM2 refinement)
-    use_sam2 = args.detector == "dino_sam2"
+    # Load detector
     sam2_ckpt = None
     if args.sam2_checkpoint:
         sam2_ckpt = str(
             args.sam2_checkpoint if args.sam2_checkpoint.is_absolute()
             else repo_root / args.sam2_checkpoint
         )
-    detector = DINOv2SAM2Detector(
-        device=_select_device(),
-        confidence_threshold=args.confidence,
-        sam2_checkpoint=sam2_ckpt,
-        use_sam2=use_sam2,
-    )
+
+    if args.detector == "sam2_amg":
+        from agrobot_perception.detectors.sam2_amg_detector import SAM2AMGDetector
+        detector = SAM2AMGDetector(
+            device=_select_device(),
+            sam2_checkpoint=sam2_ckpt,
+            confidence_threshold=args.confidence,
+        )
+    else:
+        use_sam2 = args.detector == "dino_sam2"
+        detector = DINOv2SAM2Detector(
+            device=_select_device(),
+            confidence_threshold=args.confidence,
+            sam2_checkpoint=sam2_ckpt,
+            use_sam2=use_sam2,
+        )
     input_size = (518, 518)
 
     # Load ground truth if provided
