@@ -53,14 +53,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-
-# SAM2's image predictor logs one line per frame at INFO level.
-# Suppress it so only our epoch-level output is visible.
-for _noisy in ("sam2", "sam2.sam2_image_predictor", "sam2.modeling"):
-    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 _INPUT_SIZE = 518
 _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -260,6 +256,12 @@ def train(
     from sam2.build_sam import build_sam2
     from sam2.sam2_image_predictor import SAM2ImagePredictor
 
+    # Suppress SAM2's per-frame INFO logs — must happen after import
+    # so the loggers actually exist when we set their levels.
+    for _name in logging.root.manager.loggerDict:
+        if _name.startswith("sam2"):
+            logging.getLogger(_name).setLevel(logging.WARNING)
+
     _SAM2_CFG = "configs/sam2.1/sam2.1_hiera_s.yaml"
 
     logger.info("Loading SAM2 from %s...", sam2_ckpt)
@@ -289,84 +291,85 @@ def train(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print()
-    for epoch in range(1, epochs + 1):
-        epoch_loss = 0.0
-        n_batches  = 0
-        random.shuffle(records)
+    with logging_redirect_tqdm():
+        for epoch in range(1, epochs + 1):
+            epoch_loss = 0.0
+            n_batches  = 0
+            random.shuffle(records)
 
-        bar = tqdm(
-            records,
-            desc=f"Epoch {epoch:>{len(str(epochs))}}/{epochs}",
-            unit="img",
-            ncols=88,
-            leave=True,
-        )
-        bar.set_postfix(loss=float("nan"), best=f"{best_loss:.4f}")
+            bar = tqdm(
+                records,
+                desc=f"Epoch {epoch:>{len(str(epochs))}}/{epochs}",
+                unit="img",
+                ncols=88,
+                leave=True,
+            )
+            bar.set_postfix(loss="-.----", best=f"{best_loss:.4f}")
 
-        for rec in bar:
-            bgr = cv2.imread(str(rec["image_path"]))
-            if bgr is None:
-                continue
-
-            orig_w, orig_h = rec["orig_w"], rec["orig_h"]
-            rgb_hwc, scale, pad_x, pad_y = _letterbox_rgb(bgr)
-
-            with torch.no_grad():
-                predictor.set_image(rgb_hwc)
-
-            image_embed    = predictor._features["image_embed"]
-            high_res_feats = predictor._features.get("high_res_feats")
-
-            image_loss = torch.tensor(0.0, device=device)
-            n_boxes    = 0
-
-            for inst in rec["instances"]:
-                box = _bbox_to_518(inst["bbox_xywh"], orig_w, orig_h, scale, pad_x, pad_y)
-                if box is None:
+            for rec in bar:
+                bgr = cv2.imread(str(rec["image_path"]))
+                if bgr is None:
                     continue
-                gt_mask_np = _polygon_to_518_mask(
-                    inst["polygon"], orig_w, orig_h, scale, pad_x, pad_y
+
+                orig_w, orig_h = rec["orig_w"], rec["orig_h"]
+                rgb_hwc, scale, pad_x, pad_y = _letterbox_rgb(bgr)
+
+                with torch.no_grad():
+                    predictor.set_image(rgb_hwc)
+
+                image_embed    = predictor._features["image_embed"]
+                high_res_feats = predictor._features.get("high_res_feats")
+
+                image_loss = torch.tensor(0.0, device=device)
+                n_boxes    = 0
+
+                for inst in rec["instances"]:
+                    box = _bbox_to_518(inst["bbox_xywh"], orig_w, orig_h, scale, pad_x, pad_y)
+                    if box is None:
+                        continue
+                    gt_mask_np = _polygon_to_518_mask(
+                        inst["polygon"], orig_w, orig_h, scale, pad_x, pad_y
+                    )
+                    if gt_mask_np is None:
+                        continue
+                    gt_mask    = torch.from_numpy(gt_mask_np).to(device)
+                    box_tensor = torch.tensor([list(box)], dtype=torch.float32, device=device)
+                    logit      = _run_decoder(sam2_model, image_embed, high_res_feats, box_tensor, device)
+                    image_loss = image_loss + _combined_loss(logit, gt_mask)
+                    n_boxes   += 1
+
+                if n_boxes == 0:
+                    continue
+
+                image_loss = image_loss / n_boxes
+                optimizer.zero_grad()
+                image_loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    [p for p in sam2_model.parameters() if p.requires_grad], max_norm=1.0
                 )
-                if gt_mask_np is None:
-                    continue
-                gt_mask    = torch.from_numpy(gt_mask_np).to(device)
-                box_tensor = torch.tensor([list(box)], dtype=torch.float32, device=device)
-                logit      = _run_decoder(sam2_model, image_embed, high_res_feats, box_tensor, device)
-                image_loss = image_loss + _combined_loss(logit, gt_mask)
-                n_boxes   += 1
+                optimizer.step()
+                scheduler.step()
 
-            if n_boxes == 0:
+                epoch_loss += image_loss.item()
+                n_batches  += 1
+                bar.set_postfix(
+                    loss=f"{epoch_loss / n_batches:.4f}",
+                    best=f"{best_loss:.4f}",
+                )
+
+            bar.close()
+
+            if n_batches == 0:
+                logger.warning("Epoch %d: no batches processed.", epoch)
                 continue
 
-            image_loss = image_loss / n_boxes
-            optimizer.zero_grad()
-            image_loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                [p for p in sam2_model.parameters() if p.requires_grad], max_norm=1.0
-            )
-            optimizer.step()
-            scheduler.step()
-
-            epoch_loss += image_loss.item()
-            n_batches  += 1
-            bar.set_postfix(
-                loss=f"{epoch_loss / n_batches:.4f}",
-                best=f"{best_loss:.4f}",
-            )
-
-        bar.close()
-
-        if n_batches == 0:
-            logger.warning("Epoch %d: no batches processed.", epoch)
-            continue
-
-        mean_loss = epoch_loss / n_batches
-        saved = ""
-        if mean_loss < best_loss:
-            best_loss = mean_loss
-            torch.save(sam2_model.state_dict(), str(output_path))
-            saved = "  ✓ saved"
-        print(f"  └─ Epoch {epoch}/{epochs}  loss={mean_loss:.4f}  best={best_loss:.4f}{saved}")
+            mean_loss = epoch_loss / n_batches
+            saved = ""
+            if mean_loss < best_loss:
+                best_loss = mean_loss
+                torch.save(sam2_model.state_dict(), str(output_path))
+                saved = "  ✓ saved"
+            tqdm.write(f"  └─ Epoch {epoch}/{epochs}  loss={mean_loss:.4f}  best={best_loss:.4f}{saved}")
 
     print()
     logger.info("Training complete. Best loss: %.4f", best_loss)
