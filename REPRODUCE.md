@@ -80,10 +80,12 @@ python3 perception/tools/build_val_gt_csv.py \
 | S2 (baseline) | dino_sam2, conf=0.2 | NucBox CPU | 345 | 384 | 0 | — | RGB prior, SAM2 loaded |
 | S2 (ablation) | dino_only, conf=0.2 | NucBox CPU | 362 | 395 | 0 | — | No SAM2, RGB prior |
 | **S2.6** | dino_sam2, conf=0.3 | NucBox CPU | 1032 | 1262 | **1,439** | — | Data-driven embedding |
-| **S3.0** | dino_sam2, conf=0.3 | NucBox CPU | 1055 | 1286 | 1,439 | **0.0000** | First mAP run, zero-shot |
-| S3.1 | DINOv2 ONNX export | Mac Docker (CPU) | — | — | — | — | 346 MB opset-17 graph, input (1,3,518,518)→(1,1369,768) |
-| S3.2 | MIGraphX GPU | NucBox ROCm 6.4 | — | — | — | — | **Blocked**: gfx1151 kernel ABI incompatibility, ROCm 7.x required |
-| S3 target | dino_sam2 + MIGraphX GPU | NucBox ROCm 7.x | **<33** | **<33** | TBD | TBD | After host ROCm upgrade — see docs/SPRINT3_ROCM_UPGRADE.md |
+| **S3.0** | dino_sam2, conf=0.3 | NucBox CPU | 1055 | 1286 | 1,439 | **0.0000** | Zero-shot baseline |
+| S3.1 | DINOv2 ONNX export | Mac Docker (CPU) | — | — | — | — | 346 MB opset-17 graph |
+| S3.2 | MIGraphX GPU | NucBox ROCm 6.4 | — | — | — | — | **Blocked**: kernel ABI conflict, needs ROCm 7.3 |
+| S3.3a (rect proxy) | dino_sam2, conf=0.3 | NucBox CPU | 876 | 1094 | — | **0.0000** | Rect mask fine-tune, overfit (loss→0.012) |
+| **S3.3b** | dino_sam2, conf=0.3 | NucBox CPU | TBD | TBD | TBD | **TBD** | COCO polygon fine-tune — in progress |
+| S3 target | dino_sam2 + MIGraphX | NucBox ROCm 7.x | **<33** | **<33** | TBD | TBD | After ROCm 7.3 |
 
 ### Reading the S3.0 mAP result
 
