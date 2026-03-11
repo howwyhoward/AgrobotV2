@@ -6,14 +6,14 @@ Single source of truth for the perception pipeline roadmap. Use this to see wher
 
 ## Where You Are Now
 
-| Phase   | Sprint | Status   | What’s done / next |
-|---------|--------|----------|--------------------|
-| Phase 1 | Sprint 1 | **Done** | Bazel, Docker ROS 2 Jazzy, Tailscale, RealSense stack, 2-machine pivot |
-| Phase 2 | **Sprint 2** | **In progress** | Zero-shot DINOv2+SAM2 on Mac done. Next: NucBox camera + eval + dataset + fine-tune + CI + depth→3D + one ablation |
-| Phase 3 | Sprint 3 | Pending | ROCm/MIGraphX >30 FPS, ROSplat 3DGS, safety/fallback |
-| Phase 4 | Sprint 4 | Pending | Qwen-VL, HIL, natural-language pick |
+| Phase   | Sprint   | Status             | What's done |
+|---------|----------|--------------------|-------------|
+| Phase 1 | Sprint 1 | Done               | Bazel, Docker ROS 2 Jazzy, Tailscale, RealSense, 2-machine pivot |
+| Phase 2 | Sprint 2 | Done               | Zero-shot DINOv2+SAM2, eval, depth-to-3D, CI, ablation, data-driven embedding |
+| Phase 3 | Sprint 3 | Done (partial)     | ONNX export, SAM2 fine-tune, SAM2 AMG detector (mAP 0 to 0.023), failure modes + watchdog. MIGraphX GPU blocked, see docs/SPRINT3_ROCM_ISSUE.md |
+| Phase 4 | Sprint 4 | In progress        | Qwen-VL deployment, HIL testing |
 
-**You are in Sprint 2.** Sprint 2 is expanded below to include all “weakness-fixing” work so the stack is employer-grade before you move to 3DGS and VLM.
+**You are in Sprint 4.**
 
 ---
 

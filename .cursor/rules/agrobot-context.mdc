@@ -16,19 +16,21 @@ Always label commands and environment-specific decisions with one of these tags:
 
 ## Current Sprint
 <!-- UPDATE THIS AS SPRINTS ADVANCE -->
-**Phase 2 — Sprint 2: Detection + Eval + 3D + Rigor**
-Active: Zero-shot DINOv2+SAM2 done on Mac. Next: NucBox camera + eval script + depth→3D + CI + ablation + fine-tune.
+**Phase 3 — Sprint 3: Done. Starting Sprint 4.**
+Sprint 3 complete: ONNX export, SAM2 fine-tuning, SAM2 AMG detector (mAP 0→0.023), failure modes + watchdog.
+MIGraphX GPU benchmark deferred (ROCm/kernel conflict) — see docs/SPRINT3_ROCM_ISSUE.md.
 Full step-by-step plan: [docs/GRAND_PLAN.md](docs/GRAND_PLAN.md)
 
 ## Sprint Roadmap
-- Sprint 1: Bazel monorepo · Docker ROS 2 Jazzy · Tailscale · RealSense · 2-machine stack (done)
-- Sprint 2: DINOv2+SAM2 zero-shot · eval (mAP, latency) · depth→3D · CI · ablation · SAM2 fine-tune `[MAC]` + `[NUCBOX]`
-- Sprint 3: ROCm/MIGraphX >30 FPS · ROSplat 3DGS · safety/fallback `[NUCBOX]`
+- Sprint 1: Bazel monorepo · Docker ROS 2 Jazzy · Tailscale · RealSense · 2-machine stack ✅
+- Sprint 2: DINOv2+SAM2 zero-shot · eval (mAP, latency) · depth→3D · CI · ablation · SAM2 fine-tune ✅
+- Sprint 3: ONNX export · SAM2 AMG detector · SAM2 fine-tuning · failure modes + watchdog ✅ · MIGraphX GPU ⏳ (ROCm 7.3)
 - Sprint 4: Quantized Qwen-VL · HIL testing `[NUCBOX]`
 
 ## Key Architectural Patterns Already Established
 - **Thin node, thick library**: ROS 2 nodes subscribe/publish only; all logic lives in utility modules
-- **Pluggable detector interface**: `PlaceholderDetector` → `DINOv2SAM2Detector` in Sprint 2 (zero node changes)
+- **Pluggable detector interface**: `PlaceholderDetector` → `DINOv2SAM2Detector` → `SAM2AMGDetector` (zero node changes)
+- **SAM2 proposes, DINOv2 scores**: architecturally correct — SAM2 AMG generates pixel-precise masks, DINOv2 scores for tomatoness
 - **Sprint-forward comments**: `# Sprint N: replace with ...` marks all known future swap points
 - **apt over pip** for anything the ROS base image already ships (numpy, opencv, pytest, rclpy)
 

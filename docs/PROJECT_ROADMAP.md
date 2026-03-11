@@ -17,7 +17,7 @@
 
 ## Phase 2: Sim-to-Real & Zero-Shot Prototype (Weeks 2–3)
 
-### Sprint 2: Zero-Shot Pipeline, Eval, 3D & Rigor — **In progress**
+### Sprint 2: Zero-Shot Pipeline, Eval, 3D & Rigor — **Done**
 
 **Goal:** Prototype DINOv2+SAM2 zero-shot detection, add evaluation and depth→3D, and prepare for fine-tuning on NucBox.
 
@@ -31,7 +31,7 @@
 - **Done:** Data: Laboro Tomato val split in `data/val_list.txt` (161 images); `data/README.md`; dataset dirs gitignored.
 - **Done:** Ablation path: `--detector dino_only` for DINOv2-only comparison.
 - **Deferred:** NVIDIA Isaac Sim / synthetic data generation (requires HPC or NVIDIA GPU). Use real data (Laboro Tomato, KUTomaData) for now; revisit if HPC access is restored.
-- **Next:** Curate Laboro Tomato (and optionally KUTomaData) on NucBox (`data/Laboro-Tomato/`); run SAM2 fine-tuning on NucBox; re-run eval and document in REPRODUCE.md.
+- **Sprint 2 complete.** See Sprint 3 for fine-tuning, ONNX, and architecture improvements.
 
 **On-Site (Test/Integration):**
 
@@ -42,7 +42,7 @@
 
 ## Phase 3: Robot Deployment & Readiness (Weeks 3–4)
 
-### Sprint 3: Model Fine-Tuning & Spatial Mapping
+### Sprint 3: Model Fine-Tuning & Spatial Mapping — **Done (partial)**
 
 **Goal:** Convert 2D detections to 3D reliably and optimize for AMD Radeon hardware.
 
