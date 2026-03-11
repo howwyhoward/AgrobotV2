@@ -299,15 +299,9 @@ def train(
             desc=f"Epoch {epoch:>{len(str(epochs))}}/{epochs}",
             unit="img",
             ncols=88,
-            bar_format=(
-                "{desc} │{bar}│ {n_fmt}/{total_fmt}"
-                "  loss={postfix[loss]:.4f}"
-                "  best={postfix[best]:.4f}"
-                "  [{elapsed}<{remaining}]"
-            ),
-            postfix={"loss": float("nan"), "best": best_loss},
             leave=True,
         )
+        bar.set_postfix(loss=float("nan"), best=f"{best_loss:.4f}")
 
         for rec in bar:
             bgr = cv2.imread(str(rec["image_path"]))
@@ -356,8 +350,8 @@ def train(
             epoch_loss += image_loss.item()
             n_batches  += 1
             bar.set_postfix(
-                loss=epoch_loss / n_batches,
-                best=best_loss,
+                loss=f"{epoch_loss / n_batches:.4f}",
+                best=f"{best_loss:.4f}",
             )
 
         bar.close()
