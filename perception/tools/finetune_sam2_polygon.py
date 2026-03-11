@@ -301,10 +301,9 @@ def train(
                 records,
                 desc=f"Epoch {epoch:>{len(str(epochs))}}/{epochs}",
                 unit="img",
-                ncols=88,
-                leave=True,
+                ncols=72,
+                leave=False,
             )
-            bar.set_postfix(loss="-.----", best=f"{best_loss:.4f}")
 
             for rec in bar:
                 bgr = cv2.imread(str(rec["image_path"]))
@@ -354,10 +353,6 @@ def train(
 
                 epoch_loss += image_loss.item()
                 n_batches  += 1
-                bar.set_postfix(
-                    loss=f"{epoch_loss / n_batches:.4f}",
-                    best=f"{best_loss:.4f}",
-                )
 
             bar.close()
 
