@@ -1,28 +1,32 @@
 # Reproducibility — Agrobot TOM v2
 
-## Quick start (copy-paste on NucBox)
+## Quick start (NucBox, inside ROCm container)
 
 ```bash
-# 1. Enter ROCm container
 ./deployment/docker/run_rocm.sh bash
+```
 
-# 2. Run full eval with mAP (inside container)
-AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
-  python3 perception/eval/run_eval.py \
-  --val-list data/val_list.txt \
-  --gt-csv data/val_gt.csv \
-  --confidence 0.3
-
-# 3. Ablation — DINOv2 only (no SAM2)
+**Current best detector (`sam2_amg`):**
+```bash
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   python3 perception/eval/run_eval.py \
   --val-list data/val_list.txt \
   --gt-csv data/val_gt.csv \
   --confidence 0.3 \
-  --detector dino_only
+  --detector sam2_amg \
+  --amg-points 12
 ```
 
-> **NucBox env vars required:** `AGROBOT_FORCE_CPU=1` bypasses GPU selection. `HIP_VISIBLE_DEVICES=""` prevents SAM2's HIP kernels from initialising. Both are CPU-only workarounds. GPU path blocked by kernel conflict — see [docs/SPRINT3_ROCM_UPGRADE.md](docs/SPRINT3_ROCM_UPGRADE.md).
+**Legacy detector (research baseline):**
+```bash
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
+  python3 perception/eval/run_eval.py \
+  --val-list data/val_list.txt \
+  --gt-csv data/val_gt.csv \
+  --confidence 0.3
+```
+
+> **NucBox env vars required:** `AGROBOT_FORCE_CPU=1` bypasses GPU selection (pre-built ROCm wheels fault on gfx1151). `HIP_VISIBLE_DEVICES=""` prevents SAM2 HIP kernel init. GPU path blocked by kernel ABI conflict — see [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md).
 
 ---
 
@@ -30,16 +34,16 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
 
 | Model | Path | How to get |
 |-------|------|-----------|
-| DINOv2 ViT-B/14 | `~/.cache/torch/hub/` | Auto-downloaded by torch.hub on first run |
+| DINOv2 ViT-B/14 | `~/.cache/torch/hub/` | Auto-downloaded by `torch.hub` on first run |
 | SAM2.1 hiera-small | `models/sam2/sam2.1_hiera_small.pt` | `curl -L -o models/sam2/sam2.1_hiera_small.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt` |
-| Query embedding | `models/query_embedding.pt` | Built from training set — see S2.6 below |
+| Query embedding | `models/query_embedding.pt` | Built from Laboro Tomato training set — see S2.6 below |
+| Fine-tuned SAM2 decoder | `models/sam2/sam2_tomato_finetuned.pt` | Run `finetune_sam2_polygon.py` — auto-loaded when present |
 
 ---
 
-## One-time setup commands
+## One-time setup
 
-### Build query embedding (S2.6) — run once on NucBox, ~6 min
-
+### Build query embedding — ~6 min on NucBox CPU
 ```bash
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   python3 perception/tools/build_query_embedding.py \
@@ -48,61 +52,49 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --output models/query_embedding.pt
 ```
 
-### Sync models Mac ↔ NucBox
-
+### Fine-tune SAM2 decoder on COCO polygon masks — ~60 min on NucBox CPU
 ```bash
-# Pull from NucBox to Mac
-bash tools/network/setup/model_sync.sh --pull
-
-# Push from Mac to NucBox
-bash tools/network/setup/model_sync.sh --all
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
+  python3 perception/tools/finetune_sam2_polygon.py \
+  --coco-json data/Laboro-Tomato/annotations/train.json \
+  --train-images data/Laboro-Tomato/train/images \
+  --sam2-checkpoint models/sam2/sam2.1_hiera_small.pt \
+  --output models/sam2/sam2_tomato_finetuned.pt \
+  --epochs 5
 ```
 
-### Generate val_gt.csv (S3.0) — already committed, rebuild if labels change
+### Sync models Mac ↔ NucBox
+```bash
+bash tools/network/setup/model_sync.sh --pull   # NucBox → Mac
+bash tools/network/setup/model_sync.sh --all    # Mac → NucBox
+```
 
+### Rebuild val_gt.csv (if labels change — already committed)
 ```bash
 python3 perception/tools/build_val_gt_csv.py \
   --val-images data/Laboro-Tomato/val/images \
   --val-labels data/Laboro-Tomato/val/labels \
-  --output data/val_gt.csv \
-  --val-list data/val_list.txt
+  --output data/val_gt.csv --val-list data/val_list.txt
 ```
 
 ---
 
-## Results history
+## Results — Laboro Tomato val set (161 images, 1,996 GT boxes)
 
-### Validation set: Laboro Tomato, 161 images, 1,996 GT boxes
+| Sprint | Detector | Config | Device | Mean ms | p99 ms | mAP@0.5 | Notes |
+|--------|----------|--------|--------|---------|--------|---------|-------|
+| S1 | dino_sam2 | conf=0.3 | Mac CPU | 820 | 1487 | — | RGB prior, 0 detections |
+| S2 baseline | dino_sam2 | conf=0.2 | NucBox CPU | 345 | 384 | — | RGB prior, SAM2 loaded |
+| S2 ablation | dino_only | conf=0.2 | NucBox CPU | 362 | 395 | — | No SAM2 |
+| S2.6 | dino_sam2 | conf=0.3 | NucBox CPU | 1032 | 1262 | 0.0000 | Data-driven embedding, 1,439 detections |
+| S3.0 | dino_sam2 | conf=0.3 + GT | NucBox CPU | 1055 | 1286 | **0.0000** | First mAP measurement; coarse 14px proposals fail IoU@0.5 |
+| S3.1 | — | DINOv2 ONNX export | Mac CPU | — | — | — | 346 MB opset-17 graph |
+| S3.2 | — | MIGraphX GPU | NucBox ROCm 6.4 | — | — | — | **Blocked**: gfx1151 kernel ABI conflict — needs ROCm 7.3 |
+| S3.3 | dino_sam2 | Polygon fine-tune | NucBox CPU | — | — | 0.0000 | Decoder overfit; root cause was proposal geometry, not mask quality |
+| **S3.4a** | **sam2_amg** | pts=8, conf=0.3 | NucBox CPU | 2017 | 2493 | **0.0222** | Architecture fix: SAM2 proposes, DINOv2 scores. First real mAP. prec=0.19, rec=0.13 |
+| **S3.4b** | **sam2_amg** | pts=12, conf=0.2 | NucBox CPU | 3665 | 4321 | **0.0233** | More proposals. prec=0.14, rec=0.20 |
+| S3 GPU target | sam2_amg + MIGraphX | pts=32 | NucBox ROCm 7.x | <100 | <100 | >0.15 | After ROCm 7.3 — 1024 proposals, full GPU acceleration |
 
-| Sprint | Config | Device | Mean (ms) | p99 (ms) | Detections | mAP@0.5 | Notes |
-|--------|--------|--------|-----------|----------|------------|---------|-------|
-| S1 | dino_sam2, conf=0.3 | Mac Docker (CPU) | 820 | 1487 | 0 | — | RGB prior, cold load |
-| S2 (baseline) | dino_sam2, conf=0.2 | NucBox CPU | 345 | 384 | 0 | — | RGB prior, SAM2 loaded |
-| S2 (ablation) | dino_only, conf=0.2 | NucBox CPU | 362 | 395 | 0 | — | No SAM2, RGB prior |
-| **S2.6** | dino_sam2, conf=0.3 | NucBox CPU | 1032 | 1262 | **1,439** | — | Data-driven embedding |
-| **S3.0** | dino_sam2, conf=0.3 | NucBox CPU | 1055 | 1286 | 1,439 | **0.0000** | Zero-shot baseline |
-| S3.1 | DINOv2 ONNX export | Mac Docker (CPU) | — | — | — | — | 346 MB opset-17 graph |
-| S3.2 | MIGraphX GPU | NucBox ROCm 6.4 | — | — | — | — | **Blocked**: kernel ABI conflict, needs ROCm 7.3 |
-| S3.3a (rect proxy) | dino_sam2, conf=0.3 | NucBox CPU | 876 | 1094 | — | **0.0000** | Rect mask fine-tune, overfit (loss→0.012) |
-| S3.3b (polygon) | dino_sam2, conf=0.3 | NucBox CPU | 876 | 1094 | — | **0.0000** | Polygon fine-tune, still overfit |
-| **S3.4a sam2_amg** | sam2_amg, pts=8, conf=0.3 | NucBox CPU | 2017 | 2493 | — | **0.0222** | First real mAP — prec=0.19, rec=0.13 |
-| **S3.4b sam2_amg** | sam2_amg, pts=12, conf=0.2 | NucBox CPU | 3665 | 4321 | — | **0.0233** | More proposals — prec=0.14, rec=0.20 |
-| S3 target | sam2_amg + MIGraphX | NucBox ROCm 7.x | **<100** | **<100** | TBD | **>0.15** | pts=32 (1024 proposals) after ROCm 7.3 |
+### Key insight: why mAP was 0 until S3.4
 
-### Reading the S3.0 mAP result
-
-`mAP=0.0000, Precision=0.0028, Recall=0.0020` is the correct zero-shot baseline — not a bug. The detector fires on 1,439 regions that DINOv2 identifies as tomato-like, but the bounding boxes are coarse (14px patch granularity from connected components) and don't overlap GT annotations at IoU≥0.5. SAM2 mask refinement tightens boxes but needs fine-tuned weights to align with human annotations. **This number is the "before" for Sprint 3 fine-tuning.**
-
-### Ablation interpretation
-
-SAM2 adds ~670 ms/frame on CPU (345 ms → 1,032 ms) once detections exist. With zero detections, `dino_only` appears slower because SAM2's `set_image` is skipped entirely. The real SAM2 cost-vs-accuracy tradeoff is only measurable post fine-tuning. Sprint 3 MIGraphX target eliminates this overhead entirely.
-
----
-
-## Sprint 3 next steps
-
-1. **S3.1** — Export DINOv2 to ONNX: `torch.onnx.export` on Mac, transfer to NucBox
-2. **S3.2** — MIGraphX compile + benchmark: `migraphx-driver perf model.onnx`
-3. **S3.3** — SAM2 mask decoder fine-tuning on NucBox (freeze encoder, train decoder on Laboro Tomato)
-4. **S3.4** — ROSplat 3DGS integration in `perception.launch.py`
-5. **S3.5** — `docs/FAILURE_MODES.md` + watchdog code in detector node
+DINOv2 proposals snap to a 14px patch grid. A small tomato spans 2–3 patches → coarse bounding box → IoU < 0.5 against pixel-precise GT. SAM2 fine-tuning cannot fix spatially misaligned proposals. The fix was swapping roles: **SAM2 AMG generates pixel-precise proposals, DINOv2 scores them for tomatoness**. mAP jumped from 0 to 0.022 with no weight changes — architecture was the bottleneck.
