@@ -394,8 +394,11 @@ def train(
         "python3 perception/eval/run_eval.py "
         "--val-list data/val_list.txt "
         "--gt-csv data/val_gt.csv "
-        "--sam2-checkpoint models/sam2/sam2_tomato_finetuned.pt "
         "--confidence 0.3"
+    )
+    logger.info(
+        "  (No --sam2-checkpoint needed: detector auto-loads %s when present.)",
+        output_path.name,
     )
 
 
