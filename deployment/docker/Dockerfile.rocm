@@ -114,7 +114,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages \
     sam2 && \
     pip3 install --break-system-packages \
-    hydra-core iopath datasets onnx
+    hydra-core iopath datasets onnx tqdm
 # SAM2 training (Sprint 2 on NucBox): hydra-core/iopath used by Meta's training scripts.
 # datasets: HuggingFace dataset loading for Laboro Tomato / KUTomaData.
 # submitit omitted — single-node training on NucBox, no SLURM.
