@@ -18,6 +18,7 @@ __pycache__/
 # Editor
 .idea/
 .vscode/
+.cursor/
 *.swp
 
 # Docker Compose env (machine-specific paths — copy .env.example to .env)
