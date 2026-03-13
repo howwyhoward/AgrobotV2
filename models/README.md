@@ -22,6 +22,14 @@ Size: ~185MB. Source: https://github.com/facebookresearch/sam2/releases
 The detector runs without SAM2 weights (bounding boxes only, no pixel masks)
 and logs a warning. Masks are required for Sprint 3 fine-tuning.
 
+### Query embedding — query_embedding.pt
+Built by `perception/tools/build_query_embedding.py` from Laboro Tomato training set.
+See REPRODUCE.md for the command.
+
+### Negative embedding — negative_embedding.pt (optional)
+Built with `--output-negative models/negative_embedding.pt` for contrastive scoring.
+Suppresses leaf/stem confusers. Auto-loaded when present.
+
 ## Sprint 3 (after fine-tuning on Greene)
 
 Fine-tuned weights are transferred from HPC to this directory via `model_sync.sh`.

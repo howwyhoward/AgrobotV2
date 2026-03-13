@@ -29,11 +29,13 @@ Usage (from repo root):
 
 Runtime: ~3–8 min on CPU for 643 images (DINOv2 forward pass per image).
 Output:  models/query_embedding.pt — float32 tensor of shape (768,), L2-normalised.
+         models/negative_embedding.pt — (optional) patches outside GT boxes, for contrastive scoring.
 """
 
 from __future__ import annotations
 
 import argparse
+from typing import Optional
 import logging
 import os
 import sys
@@ -129,6 +131,7 @@ def build_embedding(
     train_images_dir: Path,
     train_labels_dir: Path,
     output_path: Path,
+    output_negative_path: Optional[Path] = None,
     max_images: int = 0,
 ) -> None:
     device = _select_device()
@@ -147,6 +150,7 @@ def build_embedding(
     logger.info("Found %d training images.", len(image_files))
 
     all_patch_embeddings: list[torch.Tensor] = []
+    all_negative_embeddings: list[torch.Tensor] = []
     skipped = 0
 
     for i, img_path in enumerate(image_files):
@@ -198,6 +202,13 @@ def build_embedding(
 
         all_patch_embeddings.append(tomato_patches.cpu())
 
+        # Negative: patches outside GT boxes (leaves, stems, background)
+        if output_negative_path is not None:
+            negative_mask = ~patch_mask
+            if negative_mask.any():
+                negative_patches = patch_grid[negative_mask]  # (M, 768)
+                all_negative_embeddings.append(negative_patches.cpu())
+
         if (i + 1) % 50 == 0:
             logger.info("  Processed %d/%d images, collected %d patch vectors so far.",
                         i + 1, len(image_files),
@@ -219,6 +230,23 @@ def build_embedding(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(query, str(output_path))
     logger.info("Saved query embedding to %s (shape=%s)", output_path, query.shape)
+
+    if output_negative_path is not None and all_negative_embeddings:
+        neg_patches = torch.cat(all_negative_embeddings, dim=0)
+        total_neg = neg_patches.shape[0]
+        if total_neg > 100_000:
+            idx = torch.randperm(total_neg)[:100_000]
+            neg_patches = neg_patches[idx]
+            logger.info("Subsampled to 100k negative patches (from %d)", total_neg)
+        logger.info("Total negative patch vectors: %d", neg_patches.shape[0])
+        neg_mean = neg_patches.mean(dim=0)
+        neg_embedding = F.normalize(neg_mean, dim=0)
+        output_negative_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(neg_embedding, str(output_negative_path))
+        logger.info("Saved negative embedding to %s (contrastive scoring)", output_negative_path)
+    elif output_negative_path is not None:
+        logger.warning("No negative patches collected. Skipping negative embedding.")
+
     logger.info("Done. Re-run eval to get detections:")
     logger.info("  AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES=\"\" PYTHONPATH=perception "
                 "python3 perception/eval/run_eval.py --val-list data/val_list.txt --confidence 0.2")
@@ -245,6 +273,10 @@ def main() -> None:
         "--max-images", type=int, default=0,
         help="Limit number of images processed (0 = all). Useful for a quick smoke-test.",
     )
+    parser.add_argument(
+        "--output-negative", type=Path, default=None,
+        help="Also build negative embedding from patches outside GT boxes (for contrastive scoring).",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent.parent
@@ -263,7 +295,16 @@ def main() -> None:
         logger.error("train-labels dir not found: %s", train_labels)
         sys.exit(1)
 
-    build_embedding(train_images, train_labels, output, max_images=args.max_images)
+    output_neg = None
+    if args.output_negative:
+        output_neg = args.output_negative if args.output_negative.is_absolute() \
+            else repo_root / args.output_negative
+
+    build_embedding(
+        train_images, train_labels, output,
+        output_negative_path=output_neg,
+        max_images=args.max_images,
+    )
 
 
 if __name__ == "__main__":

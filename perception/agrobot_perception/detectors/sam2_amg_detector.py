@@ -39,6 +39,10 @@ NMS:
   Overlapping masks for the same tomato are suppressed. Keeps highest-scoring
   per cluster; reduces duplicate false positives.
 
+Contrastive scoring:
+  When models/negative_embedding.pt exists (built with --output-negative), use
+  score = tomato_sim - negative_weight * negative_sim. Suppresses leaf/stem
+  confusers that score high on tomato but also high on negative.
 Interface:
   detect(preprocessed_chw) → list of {"box", "score", "label", "mask"}
   Identical to PlaceholderDetector and DINOv2SAM2Detector — zero node changes.
@@ -73,6 +77,7 @@ _DINO_GRID = _DINO_INPUT_SIZE // _DINO_PATCH_SIZE  # 37
 _DEFAULT_SAM2_CKPT = "models/sam2/sam2.1_hiera_small.pt"
 _DEFAULT_SAM2_CFG  = "configs/sam2.1/sam2.1_hiera_s.yaml"
 _DEFAULT_QUERY_EMB = "models/query_embedding.pt"
+_DEFAULT_NEGATIVE_EMB = "models/negative_embedding.pt"
 
 _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -116,9 +121,11 @@ class SAM2AMGDetector:
         min_mask_area: Minimum mask area in pixels (518×518 space) to keep.
             Filters out tiny spurious SAM2 masks.
         dino_score_weight: Weight for DINOv2 in fusion. score = α*dino + (1-α)*pred_iou.
-            Default 0.6 — semantic dominates; pred_iou boosts clean masks.
-        nms_iou_threshold: IoU threshold for NMS. Overlapping detections above
-            this are suppressed. 0 = disable NMS. Default 0.5.
+            1.0 = DINOv2 only (default; fusion needs per-dataset tuning).
+        nms_iou_threshold: IoU threshold for NMS. 0 = disabled (default).
+            Enable with 0.5+ to suppress duplicates; tune per-dataset.
+        negative_weight: Weight for contrastive negative term. 0 = disabled.
+            When negative_embedding.pt exists, score = tomato_sim - λ*negative_sim.
     """
 
     def __init__(
@@ -129,8 +136,9 @@ class SAM2AMGDetector:
         max_detections: int = 20,
         points_per_side: int = 8,
         min_mask_area: int = 100,
-        dino_score_weight: float = 0.6,
-        nms_iou_threshold: float = 0.5,
+        dino_score_weight: float = 1.0,
+        nms_iou_threshold: float = 0.0,
+        negative_weight: float = 0.3,
     ) -> None:
         self._device = device or _select_device()
         self._conf_threshold = confidence_threshold
@@ -139,6 +147,7 @@ class SAM2AMGDetector:
         self._min_mask_area = min_mask_area
         self._dino_score_weight = dino_score_weight
         self._nms_iou_threshold = nms_iou_threshold
+        self._negative_weight = negative_weight
         self._repo_root = _find_repo_root()
 
         ckpt = sam2_checkpoint or str(self._repo_root / _DEFAULT_SAM2_CKPT)
@@ -147,9 +156,11 @@ class SAM2AMGDetector:
         self._dino: Optional[torch.nn.Module] = None
         self._amg = None
         self._query_embedding: Optional[torch.Tensor] = None
+        self._negative_embedding: Optional[torch.Tensor] = None
 
         self._load_models()
         self._load_query_embedding()
+        self._load_negative_embedding()
 
     def _load_models(self) -> None:
         # ── DINOv2 ────────────────────────────────────────────────────────────
@@ -215,6 +226,20 @@ class SAM2AMGDetector:
                 query_path,
             )
 
+    def _load_negative_embedding(self) -> None:
+        if self._negative_weight <= 0:
+            return
+        neg_path = self._repo_root / _DEFAULT_NEGATIVE_EMB
+        if neg_path.exists():
+            q = torch.load(str(neg_path), map_location=self._device)
+            self._negative_embedding = F.normalize(q.float(), dim=0)
+            logger.info("Loaded negative embedding from %s (contrastive λ=%.2f).", neg_path, self._negative_weight)
+        else:
+            logger.debug(
+                "Negative embedding not found at %s. Run build_query_embedding.py --output-negative %s.",
+                neg_path, neg_path,
+            )
+
     def detect(self, preprocessed_chw: np.ndarray) -> list[dict]:
         """Detect tomatoes using SAM2 AMG proposals scored by DINOv2.
 
@@ -277,7 +302,14 @@ class SAM2AMGDetector:
             if inside_patches.shape[0] == 0:
                 continue
 
-            dino_sim = float((inside_patches @ self._query_embedding).mean().cpu())
+            tomato_sim = float((inside_patches @ self._query_embedding).mean().cpu())
+
+            # Contrastive: subtract negative similarity when available.
+            if self._negative_embedding is not None and self._negative_weight > 0:
+                neg_sim = float((inside_patches @ self._negative_embedding).mean().cpu())
+                dino_sim = tomato_sim - self._negative_weight * neg_sim
+            else:
+                dino_sim = tomato_sim
 
             # Fuse with SAM2 predicted_iou when available (mask shape quality).
             pred_iou = mask_info.get("predicted_iou") or mask_info.get("pred_iou")

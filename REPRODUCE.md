@@ -12,9 +12,15 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   python3 perception/eval/run_eval.py \
   --val-list data/val_list.txt \
   --gt-csv data/val_gt.csv \
-  --confidence 0.3 \
+  --confidence 0.2 \
   --detector sam2_amg \
   --amg-points 12
+```
+
+**With contrastive scoring** (after building `models/negative_embedding.pt`):
+```bash
+# Same command — contrastive is auto-enabled when negative_embedding.pt exists.
+# Tune with --negative-weight 0.3 (default) or 0.5 for stronger suppression.
 ```
 
 **Legacy detector (research baseline):**
@@ -36,7 +42,8 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
 |-------|------|-----------|
 | DINOv2 ViT-B/14 | `~/.cache/torch/hub/` | Auto-downloaded by `torch.hub` on first run |
 | SAM2.1 hiera-small | `models/sam2/sam2.1_hiera_small.pt` | `curl -L -o models/sam2/sam2.1_hiera_small.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt` |
-| Query embedding | `models/query_embedding.pt` | Built from Laboro Tomato training set — see S2.6 below |
+| Query embedding | `models/query_embedding.pt` | Built from Laboro Tomato training set — see below |
+| Negative embedding | `models/negative_embedding.pt` | Optional. Built with `--output-negative` for contrastive scoring |
 | Fine-tuned SAM2 decoder | `models/sam2/sam2_tomato_finetuned.pt` | Run `finetune_sam2_polygon.py` — auto-loaded when present |
 
 ---
@@ -50,6 +57,16 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --train-images data/Laboro-Tomato/train/images \
   --train-labels data/Laboro-Tomato/train/labels \
   --output models/query_embedding.pt
+```
+
+### Build negative embedding (contrastive scoring) — optional, ~6 min
+```bash
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
+  python3 perception/tools/build_query_embedding.py \
+  --train-images data/Laboro-Tomato/train/images \
+  --train-labels data/Laboro-Tomato/train/labels \
+  --output models/query_embedding.pt \
+  --output-negative models/negative_embedding.pt
 ```
 
 ### Fine-tune SAM2 decoder on COCO polygon masks — ~60 min on NucBox CPU
@@ -93,7 +110,7 @@ python3 perception/tools/build_val_gt_csv.py \
 | S3.3 | dino_sam2 | Polygon fine-tune | NucBox CPU | — | — | 0.0000 | Decoder overfit; root cause was proposal geometry, not mask quality |
 | **S3.4a** | **sam2_amg** | pts=8, conf=0.3 | NucBox CPU | 2017 | 2493 | **0.0222** | Architecture fix: SAM2 proposes, DINOv2 scores. First real mAP. prec=0.19, rec=0.13 |
 | **S3.4b** | **sam2_amg** | pts=12, conf=0.2 | NucBox CPU | 3665 | 4321 | **0.0233** | More proposals. prec=0.14, rec=0.20 |
-| **S3.5** | **sam2_amg** | pts=12, conf=0.2 + fusion + NMS | NucBox CPU | — | — | — | Score fusion (DINOv2 + SAM2 pred_iou), NMS IoU=0.5. Run eval for numbers. |
+| **S3.5** | **sam2_amg** | pts=12, conf=0.2 (default) | NucBox CPU | ~4000 | ~5300 | **0.0233** | DINOv2-only scoring (fusion/NMS off by default). Use --dino-weight 0.6 --nms-iou 0.5 to experiment. |
 | S3 GPU target | sam2_amg + MIGraphX | pts=32 | NucBox ROCm 7.x | <100 | <100 | >0.15 | After ROCm 7.3 — 1024 proposals, full GPU acceleration |
 
 ### Key insight: why mAP was 0 until S3.4

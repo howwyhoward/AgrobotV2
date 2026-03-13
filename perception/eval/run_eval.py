@@ -102,6 +102,24 @@ def main() -> None:
         default=2,
         help="Number of warmup frames before timing (default 2).",
     )
+    parser.add_argument(
+        "--dino-weight",
+        type=float,
+        default=1.0,
+        help="[sam2_amg] DINOv2 weight in score fusion. 1.0 = DINOv2 only (default).",
+    )
+    parser.add_argument(
+        "--nms-iou",
+        type=float,
+        default=0.0,
+        help="[sam2_amg] NMS IoU threshold. 0 = disabled (default). 0.5 = suppress overlaps.",
+    )
+    parser.add_argument(
+        "--negative-weight",
+        type=float,
+        default=0.3,
+        help="[sam2_amg] Contrastive negative weight. 0 = disabled. Requires negative_embedding.pt.",
+    )
     args = parser.parse_args()
 
     repo_root = _repo_root()
@@ -152,6 +170,9 @@ def main() -> None:
             sam2_checkpoint=sam2_ckpt,
             confidence_threshold=args.confidence,
             points_per_side=args.amg_points,
+            dino_score_weight=args.dino_weight,
+            nms_iou_threshold=args.nms_iou,
+            negative_weight=args.negative_weight,
         )
     else:
         use_sam2 = args.detector == "dino_sam2"
@@ -187,6 +208,10 @@ def main() -> None:
     # Run inference and collect latencies + detections
     latencies_ms = []
     all_detections: list[tuple[Path, list[dict]]] = []
+    total = len(image_paths)
+
+    print(f"Evaluating {total} images ({args.detector}, conf={args.confidence})...")
+    print()
 
     for i, img_path in enumerate(image_paths):
         if not img_path.exists():
@@ -202,13 +227,37 @@ def main() -> None:
 
         if i < args.warmup:
             detector.detect(preprocessed)
+            pct = 100 * (i + 1) / total
+            bar_w = 40
+            filled = int(bar_w * (i + 1) / total)
+            bar = "=" * filled + "-" * (bar_w - filled)
+            sys.stdout.write(f"\r  [{bar}] {i + 1}/{total} ({pct:.0f}%) warmup    ")
+            sys.stdout.flush()
             continue
 
         t0 = time.perf_counter()
         dets = detector.detect(preprocessed)
         t1 = time.perf_counter()
-        latencies_ms.append((t1 - t0) * 1000)
+        lat_ms = (t1 - t0) * 1000
+        latencies_ms.append(lat_ms)
         all_detections.append((img_path, dets))
+
+        # Progress: bar, count, detections, avg latency, ETA
+        pct = 100 * (i + 1) / total
+        bar_w = 40
+        filled = int(bar_w * (i + 1) / total)
+        bar = "=" * filled + "-" * (bar_w - filled)
+        avg_s = sum(latencies_ms) / len(latencies_ms) / 1000
+        remaining = total - i - 1
+        eta_s = remaining * avg_s if latencies_ms else 0
+        eta_str = f"{eta_s / 60:.1f}m" if eta_s >= 60 else f"{eta_s:.0f}s"
+        sys.stdout.write(
+            f"\r  [{bar}] {i + 1}/{total} ({pct:.0f}%) | "
+            f"{len(dets)} det | avg {avg_s:.1f}s | ETA {eta_str}    "
+        )
+        sys.stdout.flush()
+
+    print()  # Newline after progress bar
 
     if not latencies_ms:
         print("No frames timed. Add valid image paths to val_list.txt.", file=sys.stderr)
