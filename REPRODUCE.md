@@ -93,6 +93,7 @@ python3 perception/tools/build_val_gt_csv.py \
 | S3.3 | dino_sam2 | Polygon fine-tune | NucBox CPU | — | — | 0.0000 | Decoder overfit; root cause was proposal geometry, not mask quality |
 | **S3.4a** | **sam2_amg** | pts=8, conf=0.3 | NucBox CPU | 2017 | 2493 | **0.0222** | Architecture fix: SAM2 proposes, DINOv2 scores. First real mAP. prec=0.19, rec=0.13 |
 | **S3.4b** | **sam2_amg** | pts=12, conf=0.2 | NucBox CPU | 3665 | 4321 | **0.0233** | More proposals. prec=0.14, rec=0.20 |
+| **S3.5** | **sam2_amg** | pts=12, conf=0.2 + fusion + NMS | NucBox CPU | — | — | — | Score fusion (DINOv2 + SAM2 pred_iou), NMS IoU=0.5. Run eval for numbers. |
 | S3 GPU target | sam2_amg + MIGraphX | pts=32 | NucBox ROCm 7.x | <100 | <100 | >0.15 | After ROCm 7.3 — 1024 proposals, full GPU acceleration |
 
 ### Key insight: why mAP was 0 until S3.4

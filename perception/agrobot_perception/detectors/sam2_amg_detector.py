@@ -30,6 +30,15 @@ DINOv2 scoring:
   embedding. This score measures "how tomato-like is this SAM2 mask?" and
   serves as the detection confidence.
 
+Score fusion:
+  SAM2 AMG returns predicted_iou (mask shape quality) and stability_score per mask.
+  We fuse: score = dino_weight * DINOv2_similarity + (1 - dino_weight) * predicted_iou.
+  Complementary signals: semantic (tomatoness) + geometric (mask quality).
+
+NMS:
+  Overlapping masks for the same tomato are suppressed. Keeps highest-scoring
+  per cluster; reduces duplicate false positives.
+
 Interface:
   detect(preprocessed_chw) → list of {"box", "score", "label", "mask"}
   Identical to PlaceholderDetector and DINOv2SAM2Detector — zero node changes.
@@ -100,12 +109,16 @@ class SAM2AMGDetector:
 
     Args:
         device: Inference device. Auto-selected if None.
-        confidence_threshold: Minimum DINOv2 similarity score to keep a mask.
+        confidence_threshold: Minimum fused score to keep a mask.
         max_detections: Maximum number of detections per frame.
         points_per_side: SAM2 AMG grid density. 8 → 64 masks, 16 → 256 masks.
             Higher = better recall, slower. Use 8 for CPU, 16+ for GPU.
         min_mask_area: Minimum mask area in pixels (518×518 space) to keep.
             Filters out tiny spurious SAM2 masks.
+        dino_score_weight: Weight for DINOv2 in fusion. score = α*dino + (1-α)*pred_iou.
+            Default 0.6 — semantic dominates; pred_iou boosts clean masks.
+        nms_iou_threshold: IoU threshold for NMS. Overlapping detections above
+            this are suppressed. 0 = disable NMS. Default 0.5.
     """
 
     def __init__(
@@ -116,12 +129,16 @@ class SAM2AMGDetector:
         max_detections: int = 20,
         points_per_side: int = 8,
         min_mask_area: int = 100,
+        dino_score_weight: float = 0.6,
+        nms_iou_threshold: float = 0.5,
     ) -> None:
         self._device = device or _select_device()
         self._conf_threshold = confidence_threshold
         self._max_detections = max_detections
         self._points_per_side = points_per_side
         self._min_mask_area = min_mask_area
+        self._dino_score_weight = dino_score_weight
+        self._nms_iou_threshold = nms_iou_threshold
         self._repo_root = _find_repo_root()
 
         ckpt = sam2_checkpoint or str(self._repo_root / _DEFAULT_SAM2_CKPT)
@@ -260,7 +277,15 @@ class SAM2AMGDetector:
             if inside_patches.shape[0] == 0:
                 continue
 
-            score = float((inside_patches @ self._query_embedding).mean().cpu())
+            dino_sim = float((inside_patches @ self._query_embedding).mean().cpu())
+
+            # Fuse with SAM2 predicted_iou when available (mask shape quality).
+            pred_iou = mask_info.get("predicted_iou") or mask_info.get("pred_iou")
+            if pred_iou is not None and isinstance(pred_iou, (int, float)):
+                alpha = self._dino_score_weight
+                score = alpha * dino_sim + (1.0 - alpha) * float(pred_iou)
+            else:
+                score = dino_sim
 
             if score < self._conf_threshold:
                 continue
@@ -276,9 +301,36 @@ class SAM2AMGDetector:
                 "mask": seg.astype(np.uint8),
             })
 
+        # NMS to remove overlapping detections for the same tomato.
+        if self._nms_iou_threshold > 0 and detections:
+            detections = self._nms(detections)
+
         # Sort by score descending, cap at max_detections.
         detections.sort(key=lambda d: d["score"], reverse=True)
         return detections[: self._max_detections]
+
+    def _nms(self, detections: list[dict]) -> list[dict]:
+        """Apply Non-Maximum Suppression. Keeps highest-scoring per overlap cluster."""
+        if len(detections) <= 1:
+            return detections
+        boxes = np.array([d["box"] for d in detections], dtype=np.float32)
+        scores = np.array([d["score"] for d in detections], dtype=np.float32)
+        # cv2.dnn.NMSBoxes expects [x, y, w, h]
+        xywh = np.zeros_like(boxes)
+        xywh[:, 0] = boxes[:, 0]  # x
+        xywh[:, 1] = boxes[:, 1]  # y
+        xywh[:, 2] = boxes[:, 2] - boxes[:, 0]  # w
+        xywh[:, 3] = boxes[:, 3] - boxes[:, 1]  # h
+        indices = cv2.dnn.NMSBoxes(
+            xywh.tolist(),
+            scores.tolist(),
+            score_threshold=0.0,
+            nms_threshold=self._nms_iou_threshold,
+        )
+        if len(indices) == 0:
+            return detections
+        kept = np.asarray(indices).flatten()
+        return [detections[int(i)] for i in kept]
 
     @staticmethod
     def _mask_to_patch_grid(seg: np.ndarray) -> torch.Tensor:
