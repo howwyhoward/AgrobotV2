@@ -12,14 +12,20 @@
 #
 # Prerequisites:
 #   - Tailscale running (`tailscale status`)
-#   - SSH access to NucBox (e.g. ~/.ssh/config host amd-edge or nucbox)
+#   - SSH access to NucBox. Default: 100.78.233.101 (MagicDNS unreliable on Mac).
+#   - If NucBox uses a different SSH user: NUCBOX_USER=robotics-club bash model_sync.sh --pull
 ###############################################################################
 
 set -euo pipefail
 
 LOCAL_MODELS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/models"
-NUCBOX_HOST="${NUCBOX_HOST:-nucbox}"
+NUCBOX_HOST="${NUCBOX_HOST:-100.78.233.101}"
+NUCBOX_USER="${NUCBOX_USER:-}"
 NUCBOX_MODELS_DIR="${NUCBOX_MODELS_DIR:-AgrobotV2/models}"
+
+# SSH target: user@host if NUCBOX_USER set, else host (uses ~/.ssh/config)
+NUCBOX_SSH="${NUCBOX_HOST}"
+[ -n "${NUCBOX_USER}" ] && NUCBOX_SSH="${NUCBOX_USER}@${NUCBOX_HOST}"
 
 mkdir -p "${LOCAL_MODELS_DIR}"
 
@@ -28,29 +34,33 @@ usage() {
     echo "  model_sync.sh --pull              Pull models/ from NucBox to Mac"
     echo "  model_sync.sh --onnx <file.onnx>  Push one ONNX file to NucBox"
     echo "  model_sync.sh --all               Push entire local models/ to NucBox"
+    echo ""
+    echo "Env: NUCBOX_HOST (default 100.78.233.101), NUCBOX_USER (e.g. robotics-club)"
     exit 1
 }
 
-check_tailscale() {
-    if ! tailscale ping --c=1 "${NUCBOX_HOST}" &>/dev/null; then
-        echo "ERROR: Cannot reach ${NUCBOX_HOST} via Tailscale."
+check_reachable() {
+    if ! ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no \
+        "${NUCBOX_SSH}" "echo ok" &>/dev/null; then
+        echo "ERROR: Cannot reach ${NUCBOX_SSH} (SSH over Tailscale)."
         echo "  Run: tailscale status"
+        echo "  If NucBox uses a different user: NUCBOX_USER=robotics-club $0 --pull"
         exit 1
     fi
-    echo "  ✓ Tailscale: ${NUCBOX_HOST} reachable"
+    echo "  ✓ Reachable: ${NUCBOX_SSH}"
 }
 
 # ── Pull: NucBox → Mac ─────────────────────────────────────────────────────
 sync_pull() {
     echo ""
     echo "── Pull NucBox → Mac (rsync over Tailscale) ───────────────────────"
-    check_tailscale
+    check_reachable
 
-    echo "  Pulling from: ${NUCBOX_HOST}:${NUCBOX_MODELS_DIR}/"
+    echo "  Pulling from: ${NUCBOX_SSH}:${NUCBOX_MODELS_DIR}/"
     echo "  Saving to:    ${LOCAL_MODELS_DIR}/"
 
     rsync -avz --progress \
-        "${NUCBOX_HOST}:${NUCBOX_MODELS_DIR}/" \
+        "${NUCBOX_SSH}:${NUCBOX_MODELS_DIR}/" \
         "${LOCAL_MODELS_DIR}/"
 
     echo "  ✓ Models pulled to ${LOCAL_MODELS_DIR}/"
@@ -62,16 +72,16 @@ sync_push() {
 
     echo ""
     echo "── Push Mac → NucBox (rsync over Tailscale) ───────────────────────"
-    check_tailscale
+    check_reachable
 
     echo "  Pushing: ${source_path}"
-    echo "  To:      ${NUCBOX_HOST}:${NUCBOX_MODELS_DIR}/"
+    echo "  To:      ${NUCBOX_SSH}:${NUCBOX_MODELS_DIR}/"
 
-    ssh "${NUCBOX_HOST}" "mkdir -p ${NUCBOX_MODELS_DIR}"
+    ssh "${NUCBOX_SSH}" "mkdir -p ${NUCBOX_MODELS_DIR}"
 
     rsync -avz --progress \
         "${source_path}" \
-        "${NUCBOX_HOST}:${NUCBOX_MODELS_DIR}/"
+        "${NUCBOX_SSH}:${NUCBOX_MODELS_DIR}/"
 
     echo "  ✓ Pushed to ${NUCBOX_HOST}:${NUCBOX_MODELS_DIR}/"
 }
@@ -99,4 +109,4 @@ esac
 
 echo ""
 echo "Done. Verify on NucBox:"
-echo "  ssh ${NUCBOX_HOST} ls ${NUCBOX_MODELS_DIR}/"
+echo "  ssh ${NUCBOX_SSH} ls ${NUCBOX_MODELS_DIR}/"
