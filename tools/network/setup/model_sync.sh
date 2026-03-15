@@ -12,15 +12,15 @@
 #
 # Prerequisites:
 #   - Tailscale running (`tailscale status`)
-#   - SSH access to NucBox. Default: 100.78.233.101 (MagicDNS unreliable on Mac).
-#   - If NucBox uses a different SSH user: NUCBOX_USER=robotics-club bash model_sync.sh --pull
+#   - SSH access to NucBox. Default: 100.78.233.101, user robotics-club.
+#   - Override: NUCBOX_HOST=... NUCBOX_USER=... bash model_sync.sh --pull
 ###############################################################################
 
 set -euo pipefail
 
 LOCAL_MODELS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/models"
 NUCBOX_HOST="${NUCBOX_HOST:-100.78.233.101}"
-NUCBOX_USER="${NUCBOX_USER:-}"
+NUCBOX_USER="${NUCBOX_USER:-robotics-club}"
 NUCBOX_MODELS_DIR="${NUCBOX_MODELS_DIR:-AgrobotV2/models}"
 
 # SSH target: user@host if NUCBOX_USER set, else host (uses ~/.ssh/config)
@@ -35,7 +35,7 @@ usage() {
     echo "  model_sync.sh --onnx <file.onnx>  Push one ONNX file to NucBox"
     echo "  model_sync.sh --all               Push entire local models/ to NucBox"
     echo ""
-    echo "Env: NUCBOX_HOST (default 100.78.233.101), NUCBOX_USER (e.g. robotics-club)"
+    echo "Env: NUCBOX_HOST (default 100.78.233.101), NUCBOX_USER (default robotics-club)"
     exit 1
 }
 
@@ -44,7 +44,7 @@ check_reachable() {
         "${NUCBOX_SSH}" "echo ok" &>/dev/null; then
         echo "ERROR: Cannot reach ${NUCBOX_SSH} (SSH over Tailscale)."
         echo "  Run: tailscale status"
-        echo "  If NucBox uses a different user: NUCBOX_USER=robotics-club $0 --pull"
+        echo "  Override: NUCBOX_HOST=... NUCBOX_USER=... $0 --pull"
         exit 1
     fi
     echo "  ✓ Reachable: ${NUCBOX_SSH}"

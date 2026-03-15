@@ -92,11 +92,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 #   Real GPU acceleration happens in Dockerfile.rocm (ROCm) and Dockerfile.cuda.
 #
 # torch.hub (used to load DINOv2) is included with torch — no separate package.
+# onnx: required by torch.onnx.export (Sprint 3 ONNX export for MIGraphX).
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages \
     torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     pip3 install --break-system-packages \
-    sam2
+    sam2 onnx
 
 # ─── Stage 3: Final Dev Image ─────────────────────────────────────────────────
 FROM python-deps AS dev

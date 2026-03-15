@@ -39,8 +39,18 @@ Usage (from repo root):
   # Then transfer to NucBox
   bash tools/network/setup/model_sync.sh --onnx models/dino_vitb14_patches.onnx
 
+  # If MIGraphX segfaults on gfx1151, try fixed batch (rules out dynamic-shape):
+  PYTHONPATH=perception python3 perception/tools/export_dino_onnx.py \
+    --output models/dino_vitb14_patches_fixed.onnx --fixed-batch
+
 On NucBox (Sprint 3.2):
   migraphx-driver perf --onnx models/dino_vitb14_patches.onnx --gpu
+
+Known gfx1151 (Strix Halo) issue:
+  MIGraphX may segfault during "Compiling..." due to MIOpen Conv2d compilation
+  bugs on gfx1151 (ROCm/rocm-libraries#4070). If so, try --fixed-batch to rule
+  out dynamic-shape issues. If segfault persists, it is upstream ROCm, not this
+  export.
 """
 
 from __future__ import annotations
@@ -101,7 +111,7 @@ class DINOv2PatchExtractor(torch.nn.Module):
         return F.normalize(patch_tokens, dim=-1)
 
 
-def export(output_path: Path, device: torch.device) -> None:
+def export(output_path: Path, device: torch.device, fixed_batch: bool = False) -> None:
     logger.info("Loading DINOv2 (%s) via torch.hub...", _DINO_MODEL_NAME)
     dino = torch.hub.load(
         "facebookresearch/dinov2", _DINO_MODEL_NAME, pretrained=True
@@ -117,34 +127,31 @@ def export(output_path: Path, device: torch.device) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Exporting to ONNX (opset %d)...", _OPSET)
+    # MIGraphX has limited dynamic-shape support; fixed batch can avoid crashes.
+    # dynamo=False: legacy TorchScript exporter, stable with MIGraphX.
+    export_kwargs: dict = {
+        "opset_version": _OPSET,
+        "input_names": ["image"],
+        "output_names": ["patch_tokens"],
+        "do_constant_folding": True,
+        "dynamo": False,
+    }
+    if not fixed_batch:
+        export_kwargs["dynamic_axes"] = {
+            "image": {0: "batch"},
+            "patch_tokens": {0: "batch"},
+        }
+
+    logger.info("Exporting to ONNX (opset %d, fixed_batch=%s)...", _OPSET, fixed_batch)
     with torch.no_grad():
-        torch.onnx.export(
-            model,
-            dummy,
-            str(output_path),
-            opset_version=_OPSET,
-            input_names=["image"],
-            output_names=["patch_tokens"],
-            dynamic_axes={
-                # Batch dimension is dynamic so MIGraphX can batch frames.
-                # Spatial dims are fixed (518×518) — DINOv2 requires exact multiples of 14.
-                "image":        {0: "batch"},
-                "patch_tokens": {0: "batch"},
-            },
-            do_constant_folding=True,
-            # Force the legacy TorchScript-based exporter (torch.onnx v1).
-            # PyTorch >=2.5 defaults to the new dynamo-based exporter which
-            # requires onnxscript. The legacy exporter is stable, well-tested
-            # with MIGraphX, and sufficient for a feedforward ViT.
-            dynamo=False,
-        )
+        torch.onnx.export(model, dummy, str(output_path), **export_kwargs)
 
     size_mb = output_path.stat().st_size / 1e6
     logger.info("Exported to %s (%.1f MB).", output_path, size_mb)
+    batch_desc = "1" if fixed_batch else "batch"
     logger.info(
-        "Input:  (batch, 3, %d, %d)  →  Output: (batch, %d, %d)",
-        _INPUT_SIZE, _INPUT_SIZE, _N_PATCHES, _EMBED_DIM,
+        "Input:  (%s, 3, %d, %d)  →  Output: (%s, %d, %d)",
+        batch_desc, _INPUT_SIZE, _INPUT_SIZE, batch_desc, _N_PATCHES, _EMBED_DIM,
     )
 
 
@@ -212,6 +219,10 @@ def main() -> None:
         "--verify", action="store_true",
         help="After export, verify with onnxruntime (requires: pip install onnx onnxruntime).",
     )
+    parser.add_argument(
+        "--fixed-batch", action="store_true",
+        help="Export with fixed batch=1 (no dynamic_axes). Use if MIGraphX segfaults on gfx1151.",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent.parent
@@ -221,7 +232,7 @@ def main() -> None:
     device = _select_device()
     logger.info("Device: %s", device)
 
-    export(output, device)
+    export(output, device, fixed_batch=args.fixed_batch)
 
     if args.verify:
         verify(output, device)

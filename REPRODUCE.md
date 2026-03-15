@@ -1,7 +1,11 @@
 # Reproducibility — Agrobot TOM v2
 
-## Quick start (NucBox, inside ROCm container)
+## Quick start (Mac Container)
+```
+./compose.sh run --rm dev bash
+```
 
+## Quick start (NucBox, ROCm container)
 ```bash
 ./deployment/docker/run_rocm.sh bash
 ```
@@ -79,7 +83,8 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
 ### Sync models Mac ↔ NucBox
 ```bash
 bash tools/network/setup/model_sync.sh --pull   # NucBox → Mac
-bash tools/network/setup/model_sync.sh --all    # Mac → NucBox
+bash tools/network/setup/model_sync.sh --all     # Mac → NucBox
+bash tools/network/setup/model_sync.sh --onnx models/dino_vitb14_patches_fixed.onnx  # Push one ONNX
 ```
 
 ### Rebuild val_gt.csv (if labels change — already committed)

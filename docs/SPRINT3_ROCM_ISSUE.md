@@ -46,6 +46,30 @@ The NucBox runs kernel **6.17.0-14-generic** (Ubuntu 24.04 HWE, shipped with mac
 | Install kernel 6.14.0-37-generic | ⚠️ amdgpu DKMS compiled ✅, librealsense2-dkms failed ❌ |
 | GRUB switch to 6.14 | ❌ Blocked — cannot remove running kernel (6.17 was active). GRUB numeric index `1>2` and grubenv edits did not take effect due to Ubuntu's HWE auto-boot logic. |
 | ROCm 7.2 Docker on kernel 6.14 (never fully tested) | — Blocked by GRUB issue above. |
+| Kernel 6.14 + librealsense RSUSB + linux-modules-extra | ✅ WiFi, RealSense, ROCm all work. |
+| `migraphx-driver perf --gpu` on 6.14 | ❌ Segfault during "Compiling..." — likely MIOpen Conv2d bug on gfx1151 (rocm-libraries#4070). |
+
+---
+
+## MIGraphX segfault (post-kernel fix)
+
+With kernel 6.14 working, `rocminfo` and RealSense succeed. `migraphx-driver perf --gpu` still
+segfaults during compilation. This is **not** a kernel/ROCm init issue — it occurs when
+MIGraphX compiles the ONNX graph to gfx1151 kernels.
+
+**Likely cause:** MIOpen Conv2d compilation failure on gfx1151 (Strix Halo). DINOv2 ViT
+uses Conv2d in the patch embedding layer. See [rocm-libraries#4070](https://github.com/ROCm/rocm-libraries/issues/4070).
+
+**Code workaround to try:** Export with `--fixed-batch` to rule out MIGraphX dynamic-shape
+issues:
+```bash
+# [MAC] Re-export with fixed batch
+PYTHONPATH=perception python3 perception/tools/export_dino_onnx.py \
+  --output models/dino_vitb14_patches_fixed.onnx --fixed-batch
+# Sync to NucBox, then:
+migraphx-driver perf --onnx models/dino_vitb14_patches_fixed.onnx --gpu
+```
+If segfault persists, it is upstream ROCm/MIOpen, not the export.
 
 ---
 
