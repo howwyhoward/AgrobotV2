@@ -32,7 +32,7 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --confidence 0.3
 ```
 
-> **NucBox env vars required:** `AGROBOT_FORCE_CPU=1` bypasses GPU selection (pre-built ROCm wheels fault on gfx1151). `HIP_VISIBLE_DEVICES=""` prevents SAM2 HIP kernel init. GPU path blocked by kernel ABI conflict — see [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md).
+> **NucBox env vars required:** `AGROBOT_FORCE_CPU=1` bypasses GPU selection (pre-built ROCm wheels fault on gfx1151). `HIP_VISIBLE_DEVICES=""` prevents SAM2 HIP kernel init. GPU path blocked by MIOpen Conv2d bug on gfx1151 — see [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md).
 
 ---
 
@@ -107,7 +107,7 @@ python3 perception/tools/build_val_gt_csv.py \
 | S2.6 | dino_sam2 | conf=0.3 | NucBox CPU | 1032 | 1262 | 0.0000 | Data-driven embedding, 1,439 detections |
 | S3.0 | dino_sam2 | conf=0.3 + GT | NucBox CPU | 1055 | 1286 | **0.0000** | First mAP measurement; coarse 14px proposals fail IoU@0.5 |
 | S3.1 | — | DINOv2 ONNX export | Mac CPU | — | — | — | 346 MB opset-17 graph |
-| S3.2 | — | MIGraphX GPU | NucBox ROCm 6.4 | — | — | — | **Blocked**: gfx1151 kernel ABI conflict — needs ROCm 7.3 |
+| S3.2 | — | MIGraphX GPU | NucBox ROCm 7.2 | — | — | — | **Blocked**: MIOpen Conv2d bug on gfx1151. Fixed-batch ONNX tested, still segfaults. Wait for ROCm 7.3. |
 | S3.3 | dino_sam2 | Polygon fine-tune | NucBox CPU | — | — | 0.0000 | Decoder overfit; root cause was proposal geometry, not mask quality |
 | **S3.4a** | **sam2_amg** | pts=8, conf=0.3 | NucBox CPU | 2017 | 2493 | **0.0222** | Architecture fix: SAM2 proposes, DINOv2 scores. First real mAP. prec=0.19, rec=0.13 |
 | **S3.4b** | **sam2_amg** | pts=12, conf=0.2 | NucBox CPU | 3665 | 4321 | **0.0233** | Baseline: DINOv2-only scoring. prec=0.14, rec=0.20 |

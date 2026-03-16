@@ -109,4 +109,4 @@ esac
 
 echo ""
 echo "Done. Verify on NucBox:"
-echo "  ssh ${NUCBOX_SSH} ls ${NUCBOX_MODELS_DIR}/"
+printf '  ssh %s ls %s/\n' "${NUCBOX_SSH}" "${NUCBOX_MODELS_DIR}"
