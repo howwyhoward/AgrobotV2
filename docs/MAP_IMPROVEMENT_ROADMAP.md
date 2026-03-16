@@ -2,7 +2,7 @@
 
 Prioritized experiments to improve detection mAP on CPU while GPU (ROCm 7.3) is blocked.
 
-**Current best:** mAP 0.0907 (S3.7) — sam2_amg, pts=16, conf=0.2, neg λ=1.0, prec=0.34, rec=0.28.
+**Current best:** mAP 0.1701 (S3.10) — sam2_amg + polygon FT, pts=20, conf=0.2, neg=1.0, nms=0.5, prec=0.50, rec=0.34.
 
 **Target:** Maximize mAP on Laboro Tomato val (161 images, 1,996 GT boxes). Deployable levels (50%+ mAP) would require fine-tuning or a trained detector.
 
@@ -104,22 +104,18 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
 
 ## Recommended order
 
-1. **Baseline re-run** — confirm 0.0907.
-2. **Tier 1.1** — Add NMS, re-eval.
-3. **Tier 2.5** — SAM2 polygon fine-tune (5 epochs), eval with sam2_amg.
-4. **Tier 1.2–1.4** — Sweep confidence, negative_weight, amg-points.
-5. **Tier 3** — Query refinement if gains plateau.
+1. ~~Baseline re-run~~ — Done.
+2. ~~Tier 1.1 NMS~~ — S3.8: 0.112 mAP.
+3. ~~Tier 2.5 SAM2 polygon fine-tune~~ — S3.9: 0.139 mAP.
+4. ~~Tier 1.4 More proposals (pts=20)~~ — S3.10: **0.170 mAP** (current best).
+5. **Next:** pts=24 (higher recall) or conf=0.15 (occluded tomatoes).
+6. **Tier 3** — Query refinement if gains plateau.
 
 ---
 
 ## Recording results
 
-Update `REPRODUCE.md` with each run:
-
-| Sprint | Detector | Config | mAP@0.5 | Notes |
-|--------|----------|--------|---------|-------|
-| S3.8 | sam2_amg | pts=16, conf=0.2, neg=1.0, nms=0.5 | ? | NMS ablation |
-| S3.9 | sam2_amg + polygon FT | pts=16, conf=0.2, neg=1.0 | ? | Re-run S3.3 with AMG architecture |
+Update `REPRODUCE.md` with each run. Latest: S3.10 (pts=20) = 0.1701 mAP. Next: pts=24, conf=0.15.
 
 ---
 
