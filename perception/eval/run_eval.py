@@ -13,6 +13,9 @@ Usage (from repo root):
 Inside Docker:
   cd /workspace && PYTHONPATH=perception python perception/eval/run_eval.py --val-list data/val_list.txt
 
+With visualizations (HTML report + annotated images):
+  ... --visualize-dir eval_reports/run_001
+
 Requires: AGROBOT_ROOT or run from repo root so models/sam2/ and torch.hub resolve.
 """
 
@@ -119,6 +122,12 @@ def main() -> None:
         type=float,
         default=0.3,
         help="[sam2_amg] Contrastive negative weight. 0 = disabled. Requires negative_embedding.pt.",
+    )
+    parser.add_argument(
+        "--visualize-dir",
+        type=Path,
+        default=None,
+        help="Save annotated images and HTML report to this directory. Creates index.html + images/.",
     )
     args = parser.parse_args()
 
@@ -276,6 +285,7 @@ def main() -> None:
     print(f"  Detector: {args.detector}")
 
     # mAP@0.5 if we have GT
+    ap, prec, rec = 0.0, 0.0, 0.0
     if gt_by_image:
         from eval.metrics import compute_ap_iou_threshold
         ap, prec, rec = compute_ap_iou_threshold(all_detections, gt_by_image, iou_threshold=0.5)
@@ -287,6 +297,24 @@ def main() -> None:
         total_dets = sum(len(d) for _, d in all_detections)
         print("── Detections ──")
         print(f"  Total: {total_dets} (no GT → no mAP)")
+
+    # Visualization
+    if args.visualize_dir:
+        vis_dir = args.visualize_dir if args.visualize_dir.is_absolute() else repo_root / args.visualize_dir
+        from eval.visualize import generate_html_report
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        metrics = {"mAP": ap, "precision": prec, "recall": rec, "mean_ms": mean_ms, "p99_ms": p99_ms, "n_frames": n}
+        config = {
+            "detector": args.detector,
+            "confidence": args.confidence,
+            "amg_points": args.amg_points,
+            "negative_weight": args.negative_weight,
+            "nms_iou": args.nms_iou,
+        }
+        html_path = generate_html_report(
+            vis_dir, all_detections, gt_by_image, metrics, config, max_images=80,
+        )
+        print(f"  Visualizations: {html_path}")
 
     if args.output_csv:
         out_path = args.output_csv if args.output_csv.is_absolute() else repo_root / args.output_csv

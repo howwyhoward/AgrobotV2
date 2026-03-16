@@ -10,7 +10,7 @@
 ./deployment/docker/run_rocm.sh bash
 ```
 
-**Current best detector (`sam2_amg` + contrastive):**
+**Current best detector (`sam2_amg` + contrastive + NMS):**
 ```bash
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   python3 perception/eval/run_eval.py \
@@ -19,8 +19,10 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --confidence 0.2 \
   --detector sam2_amg \
   --amg-points 16 \
-  --negative-weight 1.0
+  --negative-weight 1.0 \
+  --nms-iou 0.5
 ```
+Add `--visualize-dir eval_reports/run_001` to generate HTML report + annotated images (GT=green, TP=cyan, FP=red).
 Requires `models/query_embedding.pt` and `models/negative_embedding.pt` (build with `--output-negative`). ~6.5 s/frame on CPU.
 
 **Legacy detector (research baseline):**
@@ -136,3 +138,7 @@ DINOv2 proposals snap to a 14px patch grid. A small tomato spans 2–3 patches �
 ### Proof of concept
 
 **Foundation models can do agricultural object detection with minimal training.** SAM2 for pixel-precise proposals, DINOv2 for semantic scoring, contrastive negative embedding to suppress leaf/stem. No detector training — only query + negative embeddings from patches. Runs on CPU (~6.5 s/frame). Deployable levels (50%+ mAP) would require fine-tuning or a trained detector.
+
+### Next: mAP improvement (GPU blocked)
+
+ROCm 7.3 needed for real-time GPU inference. Meanwhile, focus on fine-tuning and hyperparameter sweeps to maximize mAP. See **[docs/MAP_IMPROVEMENT_ROADMAP.md](docs/MAP_IMPROVEMENT_ROADMAP.md)** for prioritized experiments.

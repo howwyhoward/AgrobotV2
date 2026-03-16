@@ -22,6 +22,18 @@ still segfaults. Confirms this is upstream ROCm/MIOpen, not our ONNX export.
 
 ---
 
+## Root cause summary (from AMD platform investigation)
+
+AMD sent their newest integrated GPU platform (Strix Halo, gfx1151). Two separate issues:
+
+1. **Page fault (kernel 6.17):** ROCm 7.2's HIP memory allocator was built for older AMDKFD (AMD Kernel Fusion Driver) behavior. Kernel 6.17 changed that ABI; ROCm couldn't initialize the GPU. **Fix:** Switch to kernel 6.14, which uses the older AMDKFD ABI that ROCm 7.2 expects. `rocminfo` now works and the GPU is detected.
+
+2. **MIOpen Conv2d (gfx1151):** ROCm 7.2 added gfx1151 support, but MIOpen's Conv2d path for this architecture still has bugs. The chip is newer than the current ROCm release; some ops (e.g. Conv2d in DINOv2's patch embedding) aren't fully validated. **Fix:** Wait for ROCm 7.3.
+
+**Bottom line:** CPU for now. Real-time inference unlikely until AMD ships ROCm 7.3 with MIOpen fixes for gfx1151.
+
+---
+
 ## What is blocked and why it matters
 
 The Sprint 3 target is **<33 ms/frame** (>30 FPS) inference on the NucBox's Radeon
