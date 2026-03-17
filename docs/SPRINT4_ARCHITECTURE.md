@@ -206,14 +206,14 @@ flowchart LR
 
 ## 7. Experiment-to-mAP Expectation
 
-| Experiment | Change | Expected Δ mAP | Status |
+| Experiment | Change | Δ mAP | Status |
 |---|---|---|---|
-| Baseline (S3.10) | pts=20, polygon FT | — | **0.170** |
-| E1 Coverage scoring | Soft patch weights | +0.01–0.03 | Implemented |
-| E2 Multi-prototype (k=4) | k-means query | +0.03–0.06 | Implemented (needs rebuild) |
-| E4 Point-prompt FT | Re-train SAM2 decoder | +0.02–0.05 | Implemented (needs re-train) |
-| E5 Hard negatives | FP-mined negatives | +0.01–0.03 | Implemented (needs mining run) |
-| E1+E2+E4+E5 stacked | All CPU-runnable | **0.27–0.32** | Run order below |
-| E3 Semantic AMG | DINOv2-guided prompts | +0.05–0.10 | Implemented |
-| E7 Quadrant crops | 4× crop multi-scale | +0.02–0.04 | Implemented |
-| E6 LoRA DINOv2 | Adapted features | +0.05–0.15 | Implemented (needs ROCm) |
+| Baseline (S3.10) | pts=20, polygon FT (box prompts) | — | **0.170** |
+| E1+E2+E4 (S4.1, failed) | k4 query + hard neg λ=1.2 (wrong query at mining) | −0.10 | Over-suppression diagnosed |
+| **E1+E2+E4 (S4.2)** | **k4 query + background-mean neg λ=1.0** | **+0.117** | **0.287 ✓ NEW BEST** |
+| E5 Hard negatives (corrected) | Re-mine with k4 query at λ=0.5 | TBD | Run next |
+| E3 Semantic AMG | DINOv2-guided point prompts | TBD | Run next |
+| E7 Quadrant crops | 4× crop multi-scale | TBD | Run next |
+| E6 LoRA DINOv2 | Adapted features | TBD | Needs ROCm |
+
+**Recall wall:** At mAP=0.287, precision=0.72, recall=0.42. The AMG uniform grid at pts=20 (26px spacing) physically misses dense clusters. Next experiments target recall > 0.50.
