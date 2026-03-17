@@ -81,6 +81,16 @@ def main() -> None:
         help="Detection confidence threshold (default 0.3).",
     )
     parser.add_argument(
+        "--max-detections",
+        type=int,
+        default=20,
+        help=(
+            "Maximum detections returned per frame (default 20). "
+            "Raise to 30–40 on dense datasets like Laboro Tomato where some images "
+            "contain 20+ tomatoes — the hard cap silently limits recall."
+        ),
+    )
+    parser.add_argument(
         "--output-csv",
         type=Path,
         default=None,
@@ -257,6 +267,7 @@ def main() -> None:
             device=_select_device(),
             sam2_checkpoint=sam2_ckpt,
             confidence_threshold=args.confidence,
+            max_detections=args.max_detections,
             points_per_side=args.amg_points,
             dino_score_weight=args.dino_weight,
             nms_iou_threshold=args.nms_iou,
@@ -273,6 +284,7 @@ def main() -> None:
             device=_select_device(),
             sam2_checkpoint=sam2_ckpt,
             confidence_threshold=args.confidence,
+            max_detections=args.max_detections,
             top_k_semantic=args.top_k,
             sparse_grid_n=args.sparse_grid,
             dino_score_weight=args.dino_weight,
