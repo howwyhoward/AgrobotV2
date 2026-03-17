@@ -127,19 +127,101 @@ def _boxes_to_patch_mask(
     return mask
 
 
+def _kmeans_prototypes(patches: torch.Tensor, k: int, n_iter: int = 100) -> torch.Tensor:
+    """Compute k L2-normalised prototype vectors from patch embeddings via k-means.
+
+    Using k-means rather than the global mean because the tomato appearance
+    distribution in Laboro is multi-modal: green unripe, yellow transitional,
+    red ripe, and occluded/partial each occupy distinct regions of DINOv2 space.
+    The global mean sits equidistant from all modes and represents none well.
+
+    Returns: (k, D) float32 tensor, each row L2-normalised.
+    """
+    n, d = patches.shape
+    if n <= k:
+        # Pad with zeros if fewer patches than prototypes (degenerate case)
+        padded = torch.zeros(k, d)
+        padded[:n] = patches
+        return F.normalize(padded, dim=1)
+
+    # Initialise centroids with k-means++ seeding for stable convergence
+    idx = torch.randint(0, n, (1,)).item()
+    centroids = patches[idx].unsqueeze(0)  # (1, D)
+    for _ in range(k - 1):
+        # Distance of each patch to the nearest existing centroid
+        dists = 1.0 - (patches @ centroids.T)  # (N, c); cosine distance
+        min_dists = dists.min(dim=1).values     # (N,)
+        min_dists = min_dists.clamp(min=0.0)
+        probs = min_dists / min_dists.sum()
+        new_idx = torch.multinomial(probs, 1).item()
+        centroids = torch.cat([centroids, patches[new_idx].unsqueeze(0)], dim=0)
+
+    centroids = F.normalize(centroids, dim=1)  # (k, D)
+
+    for _ in range(n_iter):
+        # Assignment: nearest centroid (cosine similarity)
+        sims = patches @ centroids.T  # (N, k)
+        assignments = sims.argmax(dim=1)  # (N,)
+        new_centroids = torch.zeros_like(centroids)
+        for j in range(k):
+            members = patches[assignments == j]
+            if members.shape[0] > 0:
+                new_centroids[j] = members.mean(dim=0)
+            else:
+                # Dead cluster: re-seed from farthest point
+                farthest = (patches @ centroids.T).min(dim=1).values.argmax()
+                new_centroids[j] = patches[farthest]
+        new_centroids = F.normalize(new_centroids, dim=1)
+        if (new_centroids - centroids).norm() < 1e-5:
+            break
+        centroids = new_centroids
+
+    return centroids  # (k, D)
+
+
+def _load_dino_with_lora(device: torch.device, lora_path: Optional[Path] = None):
+    """Load DINOv2, optionally applying saved LoRA adapter weights.
+
+    LoRA weights are adapter-key-only state dicts produced by finetune_dino_lora.py.
+    We reconstruct the LoRA modules by importing the same inject_lora function
+    so the adapter architecture is guaranteed to match.
+    """
+    dino = torch.hub.load("facebookresearch/dinov2", _DINO_MODEL_NAME, pretrained=True)
+    if lora_path is not None and lora_path.exists():
+        try:
+            from perception.tools.finetune_dino_lora import inject_lora
+        except ImportError:
+            # Fallback path when running from repo root
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from finetune_dino_lora import inject_lora  # type: ignore[import]
+
+        # Default to rank=8, lora_blocks=4 matching the training defaults.
+        # If you trained with different values, pass them via CLI in the future.
+        dino = inject_lora(dino, rank=8, lora_blocks=4)
+        lora_state = torch.load(str(lora_path), map_location=device)
+        missing, unexpected = dino.load_state_dict(lora_state, strict=False)
+        logger.info("Loaded LoRA weights from %s (%d keys).", lora_path, len(lora_state))
+        if unexpected:
+            logger.warning("Unexpected LoRA keys: %s", unexpected[:5])
+
+    dino.eval().to(device)
+    return dino
+
+
 def build_embedding(
     train_images_dir: Path,
     train_labels_dir: Path,
     output_path: Path,
     output_negative_path: Optional[Path] = None,
     max_images: int = 0,
+    num_prototypes: int = 1,
+    lora_path: Optional[Path] = None,
 ) -> None:
     device = _select_device()
     logger.info("Device: %s", device)
 
     logger.info("Loading DINOv2 (%s) via torch.hub...", _DINO_MODEL_NAME)
-    dino = torch.hub.load("facebookresearch/dinov2", _DINO_MODEL_NAME, pretrained=True)
-    dino.eval().to(device)
+    dino = _load_dino_with_lora(device, lora_path=lora_path)
     logger.info("DINOv2 loaded.")
 
     image_files = sorted(train_images_dir.glob("*.jpg")) + \
@@ -220,16 +302,23 @@ def build_embedding(
 
     logger.info("Skipped %d images (no label / unreadable / empty box).", skipped)
 
-    # Stack all tomato patches → mean → L2-normalise → (768,)
     all_patches = torch.cat(all_patch_embeddings, dim=0)  # (Total_patches, 768)
     logger.info("Total tomato patch vectors: %d", all_patches.shape[0])
 
-    mean_embedding = all_patches.mean(dim=0)  # (768,)
-    query = F.normalize(mean_embedding, dim=0)  # L2-normalised
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(query, str(output_path))
-    logger.info("Saved query embedding to %s (shape=%s)", output_path, query.shape)
+
+    if num_prototypes > 1:
+        logger.info("Running k-means (k=%d) on tomato patches...", num_prototypes)
+        # L2-normalise patches before k-means so cosine distance == Euclidean distance
+        patches_normed = F.normalize(all_patches, dim=1)
+        query = _kmeans_prototypes(patches_normed, k=num_prototypes)  # (k, 768)
+        torch.save(query, str(output_path))
+        logger.info("Saved %d-prototype query embedding to %s (shape=%s)", num_prototypes, output_path, query.shape)
+    else:
+        mean_embedding = all_patches.mean(dim=0)  # (768,)
+        query = F.normalize(mean_embedding, dim=0)  # L2-normalised
+        torch.save(query, str(output_path))
+        logger.info("Saved query embedding to %s (shape=%s)", output_path, query.shape)
 
     if output_negative_path is not None and all_negative_embeddings:
         neg_patches = torch.cat(all_negative_embeddings, dim=0)
@@ -277,6 +366,23 @@ def main() -> None:
         "--output-negative", type=Path, default=None,
         help="Also build negative embedding from patches outside GT boxes (for contrastive scoring).",
     )
+    parser.add_argument(
+        "--dino-lora-path", type=Path, default=None,
+        help=(
+            "Optional path to LoRA adapter weights produced by finetune_dino_lora.py. "
+            "When provided, DINOv2 is loaded with LoRA adapters applied before building "
+            "the query embedding. Produces a LoRA-adapted embedding for use at eval time "
+            "with --dino-lora-path on run_eval.py."
+        ),
+    )
+    parser.add_argument(
+        "--num-prototypes", type=int, default=1,
+        help=(
+            "Number of k-means prototype vectors to build (default 1 = single mean). "
+            "Use 4 to separate green/yellow/red/occluded ripeness modes. "
+            "Saved as a (k, 768) tensor; detector uses max-over-k scoring."
+        ),
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent.parent
@@ -300,10 +406,17 @@ def main() -> None:
         output_neg = args.output_negative if args.output_negative.is_absolute() \
             else repo_root / args.output_negative
 
+    lora_path = None
+    if args.dino_lora_path:
+        lora_path = args.dino_lora_path if args.dino_lora_path.is_absolute() \
+            else repo_root / args.dino_lora_path
+
     build_embedding(
         train_images, train_labels, output,
         output_negative_path=output_neg,
         max_images=args.max_images,
+        num_prototypes=args.num_prototypes,
+        lora_path=lora_path,
     )
 
 

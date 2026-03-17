@@ -65,12 +65,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--detector",
-        choices=["dino_sam2", "dino_only", "sam2_amg"],
+        choices=["dino_sam2", "dino_only", "sam2_amg", "sam2_semantic"],
         default="dino_sam2",
         help=(
             "dino_sam2 = DINOv2 proposals + SAM2 refinement (default); "
             "dino_only = DINOv2 proposals only; "
-            "sam2_amg = SAM2 AMG proposals scored by DINOv2 (architecturally correct)."
+            "sam2_amg = SAM2 AMG proposals scored by DINOv2 (architecturally correct); "
+            "sam2_semantic = DINOv2 heatmap → semantic point prompts → SAM2ImagePredictor (E3)."
         ),
     )
     parser.add_argument(
@@ -129,6 +130,70 @@ def main() -> None:
         default=None,
         help="Save annotated images and HTML report to this directory. Creates index.html + images/.",
     )
+    parser.add_argument(
+        "--query-embedding",
+        type=Path,
+        default=None,
+        help=(
+            "[sam2_amg/sam2_semantic] Override path to query (positive) embedding .pt file. "
+            "Supports (768,) single-prototype and (k, 768) multi-prototype tensors. "
+            "Default: models/query_embedding.pt."
+        ),
+    )
+    parser.add_argument(
+        "--negative-embedding",
+        type=Path,
+        default=None,
+        help=(
+            "[sam2_amg/sam2_semantic] Override path to negative embedding .pt file. "
+            "Use this to A/B between models/negative_embedding.pt (background mean) "
+            "and models/hard_negative_embedding.pt (FP-mined, from mine_hard_negatives.py). "
+            "Default: models/negative_embedding.pt."
+        ),
+    )
+    parser.add_argument(
+        "--migraphx-dino",
+        type=Path,
+        default=None,
+        help=(
+            "[sam2_amg/sam2_semantic] Path to MIGraphX compiled DINOv2 .mxr file. "
+            "[NUCBOX] only. Requires ROCm + MIGraphX (blocked: see docs/SPRINT3_ROCM_ISSUE.md). "
+            "When present, replaces PyTorch DINOv2 forward with MIGraphX inference (~20ms vs ~350ms)."
+        ),
+    )
+    parser.add_argument(
+        "--dino-lora-path",
+        type=Path,
+        default=None,
+        help=(
+            "[sam2_amg/sam2_semantic] Path to LoRA adapter weights from finetune_dino_lora.py. "
+            "When provided, DINOv2 is loaded with LoRA adapters before inference. "
+            "Must be paired with a query embedding built with the same LoRA model."
+        ),
+    )
+    parser.add_argument(
+        "--amg-crops",
+        action="store_true",
+        default=False,
+        help=(
+            "[sam2_amg] Enable quadrant-crop multi-scale proposals. "
+            "Runs AMG on 4 overlapping quadrant crops and reprojects to full image. "
+            "Improves recall for small/distant tomatoes below the full-image grid resolution. "
+            "~2x latency increase."
+        ),
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=48,
+        help="[sam2_semantic] Number of top-scoring DINOv2 heatmap patches to use as semantic prompts.",
+    )
+    parser.add_argument(
+        "--sparse-grid",
+        type=int,
+        default=4,
+        help="[sam2_semantic] Supplementary uniform grid size NxN (default 4 → 16 extra points).",
+    )
     args = parser.parse_args()
 
     repo_root = _repo_root()
@@ -136,11 +201,17 @@ def main() -> None:
     os.chdir(repo_root)
 
     from agrobot_perception.utils.image_utils import preprocess_for_dino
-    from agrobot_perception.detectors.dino_sam2_detector import (
-        DINOv2SAM2Detector,
-        _select_device,
-    )
     import cv2
+
+    def _select_device():
+        import os as _os, torch as _torch
+        if _os.environ.get("AGROBOT_FORCE_CPU", "0") == "1":
+            return _torch.device("cpu")
+        if _torch.backends.mps.is_available():
+            return _torch.device("mps")
+        if _torch.cuda.is_available():
+            return _torch.device("cuda")
+        return _torch.device("cpu")
 
     # Build val image paths
 
@@ -172,6 +243,14 @@ def main() -> None:
             else repo_root / args.sam2_checkpoint
         )
 
+    def _abs_str(p: Path) -> str:
+        return str(p if p.is_absolute() else repo_root / p)
+
+    query_emb_path    = _abs_str(args.query_embedding)    if args.query_embedding    else None
+    neg_emb_path      = _abs_str(args.negative_embedding) if args.negative_embedding else None
+    lora_path         = _abs_str(args.dino_lora_path)     if args.dino_lora_path     else None
+    migraphx_dino_path = _abs_str(args.migraphx_dino)     if args.migraphx_dino     else None
+
     if args.detector == "sam2_amg":
         from agrobot_perception.detectors.sam2_amg_detector import SAM2AMGDetector
         detector = SAM2AMGDetector(
@@ -182,8 +261,29 @@ def main() -> None:
             dino_score_weight=args.dino_weight,
             nms_iou_threshold=args.nms_iou,
             negative_weight=args.negative_weight,
+            query_embedding_path=query_emb_path,
+            negative_embedding_path=neg_emb_path,
+            use_quadrant_crops=args.amg_crops,
+            dino_lora_path=lora_path,
+            migraphx_dino_path=migraphx_dino_path,
+        )
+    elif args.detector == "sam2_semantic":
+        from agrobot_perception.detectors.sam2_semantic_detector import SAM2SemanticDetector
+        detector = SAM2SemanticDetector(
+            device=_select_device(),
+            sam2_checkpoint=sam2_ckpt,
+            confidence_threshold=args.confidence,
+            top_k_semantic=args.top_k,
+            sparse_grid_n=args.sparse_grid,
+            dino_score_weight=args.dino_weight,
+            nms_iou_threshold=args.nms_iou if args.nms_iou > 0 else 0.5,
+            negative_weight=args.negative_weight,
+            query_embedding_path=query_emb_path,
+            negative_embedding_path=neg_emb_path,
+            dino_lora_path=lora_path,
         )
     else:
+        from agrobot_perception.detectors.dino_sam2_detector import DINOv2SAM2Detector
         use_sam2 = args.detector == "dino_sam2"
         detector = DINOv2SAM2Detector(
             device=_select_device(),
@@ -310,6 +410,8 @@ def main() -> None:
             "amg_points": args.amg_points,
             "negative_weight": args.negative_weight,
             "nms_iou": args.nms_iou,
+            "top_k": args.top_k,
+            "sparse_grid": args.sparse_grid,
         }
         html_path = generate_html_report(
             vis_dir, all_detections, gt_by_image, metrics, config, max_images=80,

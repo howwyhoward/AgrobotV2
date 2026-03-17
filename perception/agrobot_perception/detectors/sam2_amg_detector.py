@@ -1,59 +1,50 @@
 """
 sam2_amg_detector.py — SAM2 Automatic Mask Generator + DINOv2 semantic scoring.
 
-Why this replaces the DINOv2-proposals approach:
-  The previous architecture used DINOv2 patch similarity → connected components
-  → bounding boxes as SAM2 prompts. The fundamental problem: connected components
-  on a 37×37 patch grid produce boxes at 14px granularity that rarely achieve
-  IoU≥0.5 against pixel-precise GT annotations. Fine-tuning SAM2's decoder
-  cannot fix spatially misaligned proposals.
+Architecture lineage:
+  Sprint 1: PlaceholderDetector (colour threshold only)
+  Sprint 2: DINOv2 proposals → SAM2 refinement  [abandoned: 14px grid quantisation]
+  Sprint 3: SAM2 AMG proposals → DINOv2 scoring  [mAP 0 → 0.023 → 0.170]
+  Sprint 4: All of the following improvements applied to this detector.
 
-This architecture swaps the roles:
+Sprint 4 improvements (vs Sprint 3 baseline mAP=0.170):
+  E1 — Coverage-weighted scoring: hard 0.5 threshold replaced with float coverage
+       weights. Boundary patches of circular tomato masks now contribute
+       proportionally instead of being silently excluded.
+  E2 — Multi-prototype query: k-means (k=4) over training patches produces one
+       centroid per ripeness stage (green/yellow/orange-red/occluded). Scoring
+       uses max-over-k instead of a single mean that represents no mode well.
+  E7 — Quadrant-crop proposals: optional 4-crop multi-scale AMG recovers small/
+       distant tomatoes below the full-image grid resolution threshold (26px at
+       pts=20). Enable with use_quadrant_crops=True.
+  E6 — LoRA DINOv2: optional LoRA adapter weights (from finetune_dino_lora.py)
+       shift DINOv2 feature space toward tomato vs background discrimination
+       without catastrophic forgetting. Load via dino_lora_path.
+  E8 — MIGraphX inference: optional MIGraphX-compiled .mxr replaces the PyTorch
+       DINOv2 forward (~350ms→~20ms on NucBox GPU). Load via migraphx_dino_path.
+       Blocked on ROCm gfx1151 — see docs/SPRINT3_ROCM_ISSUE.md.
 
-  OLD: DINOv2 (proposals) → SAM2 (refinement)
-       DINOv2 proposes bad boxes → SAM2 makes them slightly better
+Scoring pipeline (per frame):
+  1. SAM2 AMG generates N pixel-precise mask proposals from a uniform grid.
+  2. [Optional] 4 quadrant-crop AMGs generate additional proposals for small objects.
+  3. DINOv2 runs once → (1369, 768) L2-normalised patch token matrix.
+  4. Per mask: coverage-weighted cosine similarity to k prototype vectors → max_k.
+  5. Contrastive term: subtract λ × coverage-weighted similarity to negative.
+  6. Fuse: α×dino_sim + (1-α)×pred_iou. Filter by confidence_threshold. NMS.
 
-  NEW: SAM2 AMG (proposals) → DINOv2 (scoring)
-       SAM2 generates pixel-precise mask proposals from a dense point grid
-       DINOv2 patch similarity scores each proposal for "tomatoness"
-
-SAM2 Automatic Mask Generator (AMG):
-  SAM2 AMG places a regular grid of points across the image (e.g. 8×8 = 64
-  points), runs the mask decoder from each point as a prompt, and returns
-  pixel-precise binary masks. Each mask is contiguous, pixel-aligned, and
-  has a well-defined bounding box — none of the 14px grid quantisation
-  problem.
-
-DINOv2 scoring:
-  For each SAM2 mask, extract the DINOv2 patch tokens whose receptive fields
-  overlap the mask region. Compute mean cosine similarity to the tomato query
-  embedding. This score measures "how tomato-like is this SAM2 mask?" and
-  serves as the detection confidence.
-
-Score fusion:
-  SAM2 AMG returns predicted_iou (mask shape quality) and stability_score per mask.
-  We fuse: score = dino_weight * DINOv2_similarity + (1 - dino_weight) * predicted_iou.
-  Complementary signals: semantic (tomatoness) + geometric (mask quality).
-
-NMS:
-  Overlapping masks for the same tomato are suppressed. Keeps highest-scoring
-  per cluster; reduces duplicate false positives.
-
-Contrastive scoring:
-  When models/negative_embedding.pt exists (built with --output-negative), use
-  score = tomato_sim - negative_weight * negative_sim. Suppresses leaf/stem
-  confusers that score high on tomato but also high on negative.
 Interface:
   detect(preprocessed_chw) → list of {"box", "score", "label", "mask"}
-  Identical to PlaceholderDetector and DINOv2SAM2Detector — zero node changes.
+  Identical to DINOv2SAM2Detector and SAM2SemanticDetector — zero node changes.
 
-Runtime on NucBox CPU (expected):
-  SAM2 image encoder: ~200 ms (once per frame, shared across all masks)
-  SAM2 mask decoder: ~30–50 ms × N_points (batched; points_per_side=8 → 64 masks)
-  DINOv2 forward: ~350 ms (once per frame)
-  Scoring: ~5 ms
-  Total: ~2–4 s/frame on CPU. Acceptable for offline eval.
-  With MIGraphX on ROCm (Sprint 3): target <100 ms/frame.
+Runtime [NUCBOX CPU, pts=20]:
+  SAM2 encoder:  ~200 ms (amortised over all masks)
+  SAM2 decoder:  ~30 ms × N masks (batched)
+  DINOv2:        ~350 ms (once per frame; ~20 ms with MIGraphX GPU)
+  Scoring:       ~5 ms
+  Total:         ~9–10 s/frame CPU. <300 ms target with MIGraphX (Sprint 4 E8).
+
+[MAC] development, [NUCBOX] deployment.
+Sprint 4: E1 coverage scoring, E2 multi-prototype, E7 quadrant crops, E6/E8 GPU path.
 """
 
 from __future__ import annotations
@@ -139,6 +130,12 @@ class SAM2AMGDetector:
         dino_score_weight: float = 1.0,
         nms_iou_threshold: float = 0.0,
         negative_weight: float = 0.3,
+        query_embedding_path: Optional[str] = None,
+        use_quadrant_crops: bool = False,
+        crop_overlap: float = 0.25,
+        dino_lora_path: Optional[str] = None,
+        migraphx_dino_path: Optional[str] = None,
+        negative_embedding_path: Optional[str] = None,
     ) -> None:
         self._device = device or _select_device()
         self._conf_threshold = confidence_threshold
@@ -150,8 +147,16 @@ class SAM2AMGDetector:
         self._negative_weight = negative_weight
         self._repo_root = _find_repo_root()
 
+        self._use_quadrant_crops = use_quadrant_crops
+        self._crop_overlap = crop_overlap
+        self._dino_lora_path = Path(dino_lora_path) if dino_lora_path else None
+        self._migraphx_dino_path = Path(migraphx_dino_path) if migraphx_dino_path else None
+        self._migraphx_prog = None
+        self._negative_embedding_path = Path(negative_embedding_path) if negative_embedding_path else None
+
         ckpt = sam2_checkpoint or str(self._repo_root / _DEFAULT_SAM2_CKPT)
         self._sam2_ckpt = Path(ckpt)
+        self._query_embedding_path = Path(query_embedding_path) if query_embedding_path else None
 
         self._dino: Optional[torch.nn.Module] = None
         self._amg = None
@@ -163,11 +168,36 @@ class SAM2AMGDetector:
         self._load_negative_embedding()
 
     def _load_models(self) -> None:
-        # ── DINOv2 ────────────────────────────────────────────────────────────
+        # ── DINOv2 — MIGraphX path (NucBox GPU) or PyTorch fallback ──────────
+        if self._migraphx_dino_path is not None and self._migraphx_dino_path.exists():
+            try:
+                import migraphx  # type: ignore[import]
+                self._migraphx_prog = migraphx.load(str(self._migraphx_dino_path))
+                logger.info("Loaded MIGraphX compiled DINOv2 from %s.", self._migraphx_dino_path)
+                # Still need PyTorch DINOv2 for query embedding builds; for inference
+                # the MIGraphX path short-circuits the PyTorch forward in detect().
+            except Exception as exc:
+                logger.warning("MIGraphX load failed (%s). Falling back to PyTorch DINOv2.", exc)
+                self._migraphx_prog = None
+
         logger.info("Loading DINOv2 (%s) via torch.hub...", _DINO_MODEL_NAME)
         self._dino = torch.hub.load(
             "facebookresearch/dinov2", _DINO_MODEL_NAME, pretrained=True
         )
+        if self._dino_lora_path is not None and self._dino_lora_path.exists():
+            try:
+                import sys as _sys
+                from pathlib import Path as _Path
+                _tools = _Path(__file__).resolve().parent.parent.parent / "tools"
+                if str(_tools) not in _sys.path:
+                    _sys.path.insert(0, str(_tools))
+                from finetune_dino_lora import inject_lora  # type: ignore[import]
+                self._dino = inject_lora(self._dino, rank=8, lora_blocks=4)
+                lora_state = torch.load(str(self._dino_lora_path), map_location=self._device)
+                self._dino.load_state_dict(lora_state, strict=False)
+                logger.info("Applied LoRA adapters from %s.", self._dino_lora_path)
+            except Exception as exc:
+                logger.warning("LoRA load failed (%s). Using vanilla DINOv2.", exc)
         self._dino.eval().to(self._device)
         logger.info("DINOv2 loaded.")
 
@@ -214,11 +244,19 @@ class SAM2AMGDetector:
             self._amg = None
 
     def _load_query_embedding(self) -> None:
-        query_path = self._repo_root / _DEFAULT_QUERY_EMB
+        query_path = self._query_embedding_path or (self._repo_root / _DEFAULT_QUERY_EMB)
         if query_path.exists():
-            q = torch.load(str(query_path), map_location=self._device)
-            self._query_embedding = F.normalize(q.float(), dim=0)
-            logger.info("Loaded query embedding from %s.", query_path)
+            q = torch.load(str(query_path), map_location=self._device).float()
+            if q.dim() == 1:
+                # Single mean embedding (768,) — normalise and keep as-is
+                self._query_embedding = F.normalize(q, dim=0)
+            else:
+                # Multi-prototype (k, 768) — each row already normalised by builder;
+                # re-normalise defensively in case the file was built without it.
+                self._query_embedding = F.normalize(q, dim=1)
+            logger.info(
+                "Loaded query embedding from %s (shape=%s).", query_path, tuple(self._query_embedding.shape)
+            )
         else:
             logger.warning(
                 "Query embedding not found at %s. "
@@ -229,15 +267,19 @@ class SAM2AMGDetector:
     def _load_negative_embedding(self) -> None:
         if self._negative_weight <= 0:
             return
-        neg_path = self._repo_root / _DEFAULT_NEGATIVE_EMB
+        neg_path = self._negative_embedding_path or (self._repo_root / _DEFAULT_NEGATIVE_EMB)
         if neg_path.exists():
-            q = torch.load(str(neg_path), map_location=self._device)
-            self._negative_embedding = F.normalize(q.float(), dim=0)
-            logger.info("Loaded negative embedding from %s (contrastive λ=%.2f).", neg_path, self._negative_weight)
+            q = torch.load(str(neg_path), map_location=self._device).float()
+            # dim=1 for (k, 768) multi-prototype tensors; dim=0 for (768,) single vector.
+            self._negative_embedding = F.normalize(q, dim=0 if q.dim() == 1 else 1)
+            logger.info(
+                "Loaded negative embedding from %s (shape=%s, contrastive λ=%.2f).",
+                neg_path, tuple(self._negative_embedding.shape), self._negative_weight,
+            )
         else:
             logger.debug(
-                "Negative embedding not found at %s. Run build_query_embedding.py --output-negative %s.",
-                neg_path, neg_path,
+                "Negative embedding not found at %s. Run build_query_embedding.py --output-negative.",
+                neg_path,
             )
 
     def detect(self, preprocessed_chw: np.ndarray) -> list[dict]:
@@ -260,11 +302,28 @@ class SAM2AMGDetector:
         rgb_hwc = np.transpose(rgb_uint8, (1, 2, 0))  # CHW → HWC
 
         # ── Step 2: DINOv2 forward — patch tokens for scoring ─────────────────
-        tensor = torch.from_numpy(preprocessed_chw).unsqueeze(0).to(self._device)
-        with torch.no_grad():
-            features = self._dino.forward_features(tensor)
-        patch_tokens = features["x_norm_patchtokens"].squeeze(0)  # (1369, 768)
-        patch_norms  = F.normalize(patch_tokens, dim=1)            # L2-normalised
+        # Use MIGraphX compiled path on NucBox when available; PyTorch otherwise.
+        if self._migraphx_prog is not None:
+            try:
+                import migraphx  # type: ignore[import]
+                inp = preprocessed_chw[None].astype(np.float32)  # (1,3,518,518)
+                result = self._migraphx_prog.run({"image": migraphx.argument(inp)})
+                # export_dino_onnx.py bakes L2-normalisation into the graph
+                patch_norms = torch.from_numpy(np.array(result[0])).squeeze(0).to(self._device)
+            except Exception as exc:
+                logger.debug("MIGraphX forward failed (%s). Falling back to PyTorch.", exc)
+                self._migraphx_prog = None  # disable for subsequent frames
+                tensor = torch.from_numpy(preprocessed_chw).unsqueeze(0).to(self._device)
+                with torch.no_grad():
+                    features = self._dino.forward_features(tensor)
+                patch_tokens = features["x_norm_patchtokens"].squeeze(0)
+                patch_norms  = F.normalize(patch_tokens, dim=1)
+        else:
+            tensor = torch.from_numpy(preprocessed_chw).unsqueeze(0).to(self._device)
+            with torch.no_grad():
+                features = self._dino.forward_features(tensor)
+            patch_tokens = features["x_norm_patchtokens"].squeeze(0)  # (1369, 768)
+            patch_norms  = F.normalize(patch_tokens, dim=1)            # L2-normalised
 
         # ── Step 3: SAM2 AMG — generate pixel-precise mask proposals ──────────
         # generate() is already @torch.no_grad internally.
@@ -273,6 +332,19 @@ class SAM2AMGDetector:
         except Exception as exc:
             logger.warning("SAM2 AMG generate() failed: %s", exc)
             return []
+
+        if not masks_data:
+            masks_data = []
+
+        # Optionally augment with quadrant-crop proposals to catch small/distant
+        # tomatoes that fall below the full-image grid resolution threshold.
+        if self._use_quadrant_crops:
+            crop_masks = self._generate_quadrant_masks(rgb_hwc)
+            masks_data = masks_data + crop_masks
+            logger.debug(
+                "AMG: %d full-image + %d quadrant-crop proposals = %d total.",
+                len(masks_data) - len(crop_masks), len(crop_masks), len(masks_data),
+            )
 
         if not masks_data:
             return []
@@ -286,27 +358,42 @@ class SAM2AMGDetector:
             if seg.sum() < self._min_mask_area:
                 continue
 
-            # Map mask pixels → DINOv2 patch grid indices.
-            # Each patch covers a 14×14 pixel block in the 518×518 image.
-            # A patch at grid position (gr, gc) covers pixels
-            #   rows [gr*14, (gr+1)*14), cols [gc*14, (gc+1)*14).
-            # Downsample the mask to 37×37 by taking the majority vote in each cell.
-            mask_grid = self._mask_to_patch_grid(seg)  # (37, 37) bool
+            # Downsample mask to the 37×37 DINOv2 patch grid as float coverage
+            # weights. Each cell ∈ [0,1] = fraction of the 14×14 block inside
+            # the mask. Using float weights (not a hard 0.5 threshold) preserves
+            # boundary patches of circular tomatoes that would otherwise be
+            # excluded, restoring the full mask footprint in the scoring region.
+            coverage = self._mask_to_patch_coverage(seg)  # (37, 37) float32
+            weights = coverage.reshape(-1)                 # (1369,) float32
 
-            if mask_grid.sum() == 0:
+            if weights.sum() < 1e-6:
                 continue
 
-            # Mean cosine similarity of patches inside the mask to query embedding.
-            patch_indices = mask_grid.reshape(-1)       # (1369,) bool
-            inside_patches = patch_norms[patch_indices]  # (N, 768)
-            if inside_patches.shape[0] == 0:
-                continue
+            weights = weights.to(self._device)
 
-            tomato_sim = float((inside_patches @ self._query_embedding).mean().cpu())
+            # Coverage-weighted cosine similarity.
+            # Single prototype (768,):  score = Σ w_i·cos(f_i, q) / Σ w_i
+            # Multi-prototype (k, 768): score = max_k [ Σ w_i·cos(f_i, qₖ) / Σ w_i ]
+            # The max-over-k picks the ripeness mode the mask best matches, so
+            # green tomatoes are no longer penalised against a red-biased centroid.
+            if self._query_embedding.dim() == 1:
+                sims = patch_norms @ self._query_embedding       # (1369,)
+                tomato_sim = float((sims * weights).sum() / weights.sum())
+            else:
+                sims_k = patch_norms @ self._query_embedding.T   # (1369, k)
+                per_proto = (sims_k * weights.unsqueeze(1)).sum(dim=0) / weights.sum()  # (k,)
+                tomato_sim = float(per_proto.max())
 
-            # Contrastive: subtract negative similarity when available.
+            # Contrastive: coverage-weighted negative similarity.
             if self._negative_embedding is not None and self._negative_weight > 0:
-                neg_sim = float((inside_patches @ self._negative_embedding).mean().cpu())
+                if self._negative_embedding.dim() == 1:
+                    neg_sims = patch_norms @ self._negative_embedding  # (1369,)
+                    neg_sim = float((neg_sims * weights).sum() / weights.sum())
+                else:
+                    neg_sims_k = patch_norms @ self._negative_embedding.T
+                    neg_sim = float(
+                        ((neg_sims_k * weights.unsqueeze(1)).sum(dim=0) / weights.sum()).max()
+                    )
                 dino_sim = tomato_sim - self._negative_weight * neg_sim
             else:
                 dino_sim = tomato_sim
@@ -341,6 +428,79 @@ class SAM2AMGDetector:
         detections.sort(key=lambda d: d["score"], reverse=True)
         return detections[: self._max_detections]
 
+    def _generate_quadrant_masks(self, rgb_hwc: np.ndarray) -> list[dict]:
+        """Run AMG on 4 overlapping quadrant crops and reproject detections.
+
+        Why this helps: at pts=20 (full image 518×518) the grid spacing is
+        518/20 = 26px. A tomato smaller than 26px in diameter gets no grid point
+        inside it and is never proposed. Splitting the image into quadrants with
+        25% overlap and running AMG at the same pts density effectively halves
+        the minimum detectable object size without changing the per-image AMG params.
+
+        Each quadrant crop covers 50% of the image in each dimension with
+        `crop_overlap` (default 25%) bleed into adjacent quadrants. Detections
+        from sub-crops are reprojected to full 518×518 pixel space and
+        deduplicated by the caller's NMS.
+        """
+        H, W = rgb_hwc.shape[:2]  # both 518
+        half_h = H // 2
+        half_w = W // 2
+        overlap_h = int(half_h * self._crop_overlap)
+        overlap_w = int(half_w * self._crop_overlap)
+
+        # Four quadrants with overlap bleed
+        crop_boxes = [
+            (0,              0,              half_w + overlap_w, half_h + overlap_h),  # TL
+            (half_w - overlap_w, 0,          W,                  half_h + overlap_h),  # TR
+            (0,              half_h - overlap_h, half_w + overlap_w, H),               # BL
+            (half_w - overlap_w, half_h - overlap_h, W,          H),                  # BR
+        ]
+
+        all_crop_masks: list[dict] = []
+        for x1c, y1c, x2c, y2c in crop_boxes:
+            crop = rgb_hwc[y1c:y2c, x1c:x2c]
+            if crop.size == 0:
+                continue
+            # Resize crop to 518×518 for AMG (maintains point density)
+            crop_resized = cv2.resize(crop, (_DINO_INPUT_SIZE, _DINO_INPUT_SIZE))
+            crop_h = y2c - y1c
+            crop_w = x2c - x1c
+            scale_x = crop_w / _DINO_INPUT_SIZE
+            scale_y = crop_h / _DINO_INPUT_SIZE
+
+            try:
+                crop_masks = self._amg.generate(crop_resized)
+            except Exception as exc:
+                logger.debug("AMG failed on quadrant crop (%d,%d,%d,%d): %s", x1c, y1c, x2c, y2c, exc)
+                continue
+
+            for m in crop_masks:
+                seg_crop = m["segmentation"]  # (518, 518) in crop space
+                # Reproject segmentation mask to full image 518×518 space
+                seg_full = np.zeros((H, W), dtype=bool)
+                # Map non-zero pixels from crop-scaled space back to full image
+                ys, xs = np.where(seg_crop)
+                if xs.size == 0:
+                    continue
+                # Scale back to crop pixel coords, then offset to full image
+                full_xs = np.clip((xs * scale_x + x1c).astype(np.int32), 0, W - 1)
+                full_ys = np.clip((ys * scale_y + y1c).astype(np.int32), 0, H - 1)
+                seg_full[full_ys, full_xs] = True
+
+                # Recompute bbox in full image space
+                cols = np.where(seg_full.any(axis=0))[0]
+                rows = np.where(seg_full.any(axis=1))[0]
+                if cols.size == 0 or rows.size == 0:
+                    continue
+
+                reprojected = dict(m)
+                reprojected["segmentation"] = seg_full
+                reprojected["bbox"] = [int(cols[0]), int(rows[0]),
+                                       int(cols[-1] - cols[0]), int(rows[-1] - rows[0])]
+                all_crop_masks.append(reprojected)
+
+        return all_crop_masks
+
     def _nms(self, detections: list[dict]) -> list[dict]:
         """Apply Non-Maximum Suppression. Keeps highest-scoring per overlap cluster."""
         if len(detections) <= 1:
@@ -365,18 +525,18 @@ class SAM2AMGDetector:
         return [detections[int(i)] for i in kept]
 
     @staticmethod
-    def _mask_to_patch_grid(seg: np.ndarray) -> torch.Tensor:
-        """Downsample a 518×518 bool mask to the 37×37 DINOv2 patch grid.
+    def _mask_to_patch_coverage(seg: np.ndarray) -> torch.Tensor:
+        """Downsample a 518×518 bool mask to a (37×37) float coverage map.
 
-        A patch cell is considered "inside" the mask if >50% of its 14×14
-        pixels are True. This avoids counting edge patches that are only
-        partially covered.
+        Each cell holds the fraction [0,1] of its 14×14 pixel block that is
+        inside the mask. Retaining fractional coverage rather than hard-
+        thresholding at 0.5 prevents boundary patches of circular tomato masks
+        from being silently excluded — at 37×37 resolution most perimeter
+        patches of a round object have 20–50% coverage and would be zeroed by
+        a hard threshold, shrinking the effective scoring region to ~60% of the
+        mask interior.
         """
-        h, w = seg.shape  # should be 518, 518
-        # Crop to exact 518×518 in case SAM2 returns a different size.
         seg_f = seg[:_DINO_GRID * _DINO_PATCH_SIZE, :_DINO_GRID * _DINO_PATCH_SIZE].astype(np.float32)
-        # Reshape to (37, 14, 37, 14) and take mean over the 14×14 blocks.
         blocks = seg_f.reshape(_DINO_GRID, _DINO_PATCH_SIZE, _DINO_GRID, _DINO_PATCH_SIZE)
-        patch_coverage = blocks.mean(axis=(1, 3))  # (37, 37)
-        grid = torch.from_numpy(patch_coverage > 0.5)  # bool tensor
-        return grid
+        patch_coverage = blocks.mean(axis=(1, 3))  # (37, 37), values in [0, 1]
+        return torch.from_numpy(patch_coverage)  # float32 tensor

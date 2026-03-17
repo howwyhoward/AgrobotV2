@@ -180,27 +180,66 @@ def _polygon_to_518_mask(
     return mask
 
 
-def _bbox_to_518(
-    bbox_xywh: list[float],
+
+def _sample_interior_points(
+    polygon_flat: list[float],
     orig_w: int,
     orig_h: int,
     scale: float,
     pad_x: int,
     pad_y: int,
-) -> tuple[float, float, float, float] | None:
-    """COCO xywh bbox → 518×518 xyxy box."""
-    x, y, w, h = bbox_xywh
-    x1 = x * scale + pad_x
-    y1 = y * scale + pad_y
-    x2 = (x + w) * scale + pad_x
-    y2 = (y + h) * scale + pad_y
-    x1 = max(0.0, min(_INPUT_SIZE - 1, x1))
-    y1 = max(0.0, min(_INPUT_SIZE - 1, y1))
-    x2 = max(0.0, min(_INPUT_SIZE - 1, x2))
-    y2 = max(0.0, min(_INPUT_SIZE - 1, y2))
-    if x2 - x1 < 2 or y2 - y1 < 2:
+    n_points: int = 3,
+) -> list[tuple[float, float]] | None:
+    """Sample n_points interior points from a COCO polygon in 518×518 space.
+
+    Strategy: centroid + jittered copies. The centroid of a convex polygon is
+    always interior. For non-convex shapes, jittered copies may land outside —
+    we filter those with a point-in-polygon test.
+
+    This is needed because SAM2 AMG uses point prompts at runtime but the
+    previous fine-tuning used box prompts. The mask decoder is a cross-attention
+    transformer: box prompts emit 2 corner tokens, point prompts emit 1 point +
+    1 label token. Training on the wrong prompt type is a systematic distribution
+    shift that caps mask quality regardless of GT polygon quality.
+    """
+    pts_orig = np.array(polygon_flat, dtype=np.float64).reshape(-1, 2)
+    if len(pts_orig) < 3:
         return None
-    return x1, y1, x2, y2
+
+    # Centroid in original space, then project into 518×518 letterbox
+    cx = pts_orig[:, 0].mean() * scale + pad_x
+    cy = pts_orig[:, 1].mean() * scale + pad_y
+
+    cx = float(np.clip(cx, 0, _INPUT_SIZE - 1))
+    cy = float(np.clip(cy, 0, _INPUT_SIZE - 1))
+
+    interior = [(cx, cy)]
+
+    # Add jittered points within ±25% of the bounding box extent, keeping only
+    # those that fall inside the (letterboxed) polygon via OpenCV pointPolygonTest
+    pts_518 = pts_orig.copy()
+    pts_518[:, 0] = pts_518[:, 0] * scale + pad_x
+    pts_518[:, 1] = pts_518[:, 1] * scale + pad_y
+    pts_518 = np.clip(pts_518, 0, _INPUT_SIZE - 1).astype(np.float32)
+
+    bb_w = pts_518[:, 0].max() - pts_518[:, 0].min()
+    bb_h = pts_518[:, 1].max() - pts_518[:, 1].min()
+    jitter_x = max(bb_w * 0.2, 2.0)
+    jitter_y = max(bb_h * 0.2, 2.0)
+
+    rng = np.random.default_rng()
+    attempts = 0
+    while len(interior) < n_points and attempts < 30:
+        attempts += 1
+        jx = float(rng.uniform(-jitter_x, jitter_x))
+        jy = float(rng.uniform(-jitter_y, jitter_y))
+        px = float(np.clip(cx + jx, 0, _INPUT_SIZE - 1))
+        py = float(np.clip(cy + jy, 0, _INPUT_SIZE - 1))
+        # cv2.pointPolygonTest returns > 0 for inside, 0 on boundary, < 0 outside
+        if cv2.pointPolygonTest(pts_518.reshape(-1, 1, 2), (px, py), False) >= 0:
+            interior.append((px, py))
+
+    return interior if interior else None
 
 
 def _dice_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -220,13 +259,24 @@ def _run_decoder(
     sam2_model,
     image_embed,
     high_res_feats,
-    box_tensor: torch.Tensor,
     device: torch.device,
+    box_tensor: torch.Tensor | None = None,
+    point_coords: torch.Tensor | None = None,
+    point_labels: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Run frozen prompt encoder + trainable mask decoder. Returns (518,518) logit."""
+    """Run frozen prompt encoder + trainable mask decoder. Returns (518,518) logit.
+
+    Accepts either box_tensor or (point_coords, point_labels) — never both.
+    Caller is responsible for passing the right prompt type for the target
+    runtime: box prompts for box-prompted predictors, point prompts for AMG.
+    """
+    points_arg = None
+    if point_coords is not None and point_labels is not None:
+        points_arg = (point_coords, point_labels)
+
     with torch.no_grad():
         sparse_emb, dense_emb = sam2_model.sam_prompt_encoder(
-            points=None, boxes=box_tensor, masks=None
+            points=points_arg, boxes=box_tensor, masks=None
         )
     decoder_out = sam2_model.sam_mask_decoder(
         image_embeddings=image_embed,
@@ -325,18 +375,36 @@ def train(
                 n_boxes    = 0
 
                 for inst in rec["instances"]:
-                    box = _bbox_to_518(inst["bbox_xywh"], orig_w, orig_h, scale, pad_x, pad_y)
-                    if box is None:
-                        continue
                     gt_mask_np = _polygon_to_518_mask(
                         inst["polygon"], orig_w, orig_h, scale, pad_x, pad_y
                     )
                     if gt_mask_np is None:
                         continue
-                    gt_mask    = torch.from_numpy(gt_mask_np).to(device)
-                    box_tensor = torch.tensor([list(box)], dtype=torch.float32, device=device)
-                    logit      = _run_decoder(sam2_model, image_embed, high_res_feats, box_tensor, device)
-                    image_loss = image_loss + _combined_loss(logit, gt_mask)
+                    gt_mask = torch.from_numpy(gt_mask_np).to(device)
+
+                    # Sample interior points matching the AMG runtime prompt type.
+                    # Average loss over n_points random foreground points so the
+                    # decoder sees a distribution of point positions rather than
+                    # always the centroid (which would overfit to a single prompt).
+                    interior_pts = _sample_interior_points(
+                        inst["polygon"], orig_w, orig_h, scale, pad_x, pad_y,
+                        n_points=3,
+                    )
+                    if not interior_pts:
+                        continue
+
+                    inst_loss = torch.tensor(0.0, device=device)
+                    for px, py in interior_pts:
+                        # SAM2 prompt encoder expects (B, N, 2) coords and (B, N) labels
+                        pt_coords = torch.tensor([[[px, py]]], dtype=torch.float32, device=device)
+                        pt_labels = torch.tensor([[1]], dtype=torch.int32, device=device)
+                        logit = _run_decoder(
+                            sam2_model, image_embed, high_res_feats, device,
+                            point_coords=pt_coords, point_labels=pt_labels,
+                        )
+                        inst_loss = inst_loss + _combined_loss(logit, gt_mask)
+
+                    image_loss = image_loss + inst_loss / len(interior_pts)
                     n_boxes   += 1
 
                 if n_boxes == 0:
