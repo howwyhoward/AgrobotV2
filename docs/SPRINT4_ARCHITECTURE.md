@@ -206,14 +206,39 @@ flowchart LR
 
 ## 7. Experiment-to-mAP Expectation
 
-| Experiment | Change | Δ mAP | Status |
-|---|---|---|---|
-| Baseline (S3.10) | pts=20, polygon FT (box prompts) | — | **0.170** |
-| E1+E2+E4 (S4.1, failed) | k4 query + hard neg λ=1.2 (wrong query at mining) | −0.10 | Over-suppression diagnosed |
-| **E1+E2+E4 (S4.2)** | **k4 query + background-mean neg λ=1.0** | **+0.117** | **0.287 ✓ NEW BEST** |
-| E5 Hard negatives (corrected) | Re-mine with k4 query at λ=0.5 | TBD | Run next |
-| E3 Semantic AMG | DINOv2-guided point prompts | TBD | Run next |
-| E7 Quadrant crops | 4× crop multi-scale | TBD | Run next |
-| E6 LoRA DINOv2 | Adapted features | TBD | Needs ROCm |
+| Run | Config | mAP | prec | rec | ms/frame | Notes |
+|---|---|---|---|---|---|---|
+| S3.10 | AMG pts=20, box-prompt FT, single-mean query | 0.170 | 0.50 | 0.34 | 9458 | Sprint 3 best |
+| S4.2 | E1+E2+E4: k4 query, bg-mean neg, pts=20, max=20 | 0.287 | 0.72 | 0.42 | 9393 | +69% breakthrough |
+| S4.4 | pts=24, max=30 | 0.328 | 0.70 | 0.49 | 13377 | More proposals |
+| S4.8 | conf=0.15, dino_weight=1.0 | 0.335 | 0.66 | 0.54 | 14578 | Lower threshold |
+| S4.9 | dino_weight=0.7, conf=0.35, pts=24 | 0.360 | 0.68 | 0.56 | 13968 | Score fusion unlock |
+| **S4.12** | **dino_weight=0.7, conf=0.35, pts=28, max=30** | **0.377** | **0.64** | **0.62** | **19081** | **Current best (+121% vs S3)** |
 
-**Recall wall:** At mAP=0.287, precision=0.72, recall=0.42. The AMG uniform grid at pts=20 (26px spacing) physically misses dense clusters. Next experiments target recall > 0.50.
+**Active experiments (run in order):**
+
+```bash
+# S4.6 — semantic detector with sufficient prompts (7× faster if it recovers recall)
+python3 perception/eval/run_eval.py --detector sam2_semantic \
+  --top-k 128 --sparse-grid 8 --max-detections 30 \
+  --confidence 0.2 --nms-iou 0.5 \
+  --query-embedding models/query_embedding_k4.pt \
+  --negative-embedding models/negative_embedding.pt \
+  --negative-weight 1.0
+
+# S4.7 — AMG pts=28 (linear recall extrapolation)
+python3 perception/eval/run_eval.py --detector sam2_amg \
+  --amg-points 28 --max-detections 30 \
+  --confidence 0.2 --nms-iou 0.5 \
+  --query-embedding models/query_embedding_k4.pt \
+  --negative-embedding models/negative_embedding.pt \
+  --negative-weight 1.0
+
+# S4.8 — lower confidence to catch borderline tomatoes
+python3 perception/eval/run_eval.py --detector sam2_amg \
+  --amg-points 24 --max-detections 30 \
+  --confidence 0.15 --nms-iou 0.5 \
+  --query-embedding models/query_embedding_k4.pt \
+  --negative-embedding models/negative_embedding.pt \
+  --negative-weight 1.0
+```

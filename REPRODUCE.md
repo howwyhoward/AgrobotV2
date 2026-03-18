@@ -9,7 +9,7 @@
 
 ---
 
-## Current best (mAP 0.287 — Sprint 4)
+## Current best (mAP 0.377 — Sprint 4, S4.12)
 
 ```bash
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
@@ -17,17 +17,19 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --val-list data/val_list.txt \
   --gt-csv data/val_gt.csv \
   --detector sam2_amg \
-  --amg-points 20 \
-  --confidence 0.2 \
+  --amg-points 28 \
+  --max-detections 30 \
+  --confidence 0.35 \
   --nms-iou 0.5 \
+  --dino-weight 0.7 \
   --query-embedding models/query_embedding_k4.pt \
   --negative-embedding models/negative_embedding.pt \
   --negative-weight 1.0
 ```
 
-Add `--visualize-dir eval_reports/sprint4` for HTML report + annotated images (GT=green, TP=cyan, FP=red). View: `cd eval_reports/sprint4 && python3 -m http.server 8000` → open http://localhost:8000
+**Requirements:** `query_embedding_k4.pt`, `negative_embedding.pt`, `sam2_tomato_finetuned.pt` (point-prompt version). ~19 s/frame on NucBox CPU.
 
-**Requirements:** `query_embedding_k4.pt`, `negative_embedding.pt`, `sam2_tomato_finetuned.pt` (point-prompt version). ~9.4 s/frame on NucBox CPU.
+Add `--visualize-dir eval_reports/s4_best` for HTML report. View: `cd eval_reports/s4_best && python3 -m http.server 8000` → http://localhost:8000
 
 > **NucBox:** `AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES=""` required (ROCm blocked on gfx1151). See [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md).
 
@@ -97,22 +99,31 @@ python3 perception/tools/build_val_gt_csv.py \
 | S3.7 | pts=16 | 0.091 | 0.34 | 0.28 | 6536 |
 | S3.8 | + nms=0.5 | 0.112 | 0.42 | 0.28 | 6329 |
 | S3.9 | + polygon FT (box prompts) | 0.139 | 0.52 | 0.27 | 7061 |
-| S3.10 | pts=20 | 0.170 | 0.50 | 0.34 | 9458 |
-| S4.1 | E1+E2+E4: soft coverage + k=4 prototypes + point-prompt FT | 0.070 | 0.79 | 0.09 | 9392 |
-| **S4.2** | **E1+E2+E4: k4 query + background-mean neg λ=1.0** | **0.287** | **0.72** | **0.42** | **9393** |
+| S3.10 | pts=20, single-mean query | 0.170 | 0.50 | 0.34 | 9458 |
+| S4.1 | k4 + hard-neg λ=1.2 (poisoned) | 0.070 | 0.79 | 0.09 | 9392 |
+| S4.2 | E1+E2+E4: k4 query + bg-mean neg λ=1.0, pts=20, max=20 | 0.287 | 0.72 | 0.42 | 9393 |
+| S4.3 | k4 + hard-neg λ=0.5 | 0.135 | 0.31 | 0.50 | 9391 |
+| S4.4 | pts=24, max=30, k4 + bg-mean λ=1.0 | 0.328 | 0.70 | 0.49 | 13377 |
+| S4.5 | sam2_semantic top-k=48 (under-prompted) | 0.083 | 0.41 | 0.22 | 1772 |
+| S4.6 | sam2_semantic top-k=128 | 0.114 | 0.36 | 0.34 | 3716 |
+| S4.7 | dino_weight=0.7, conf=0.20 | 0.134 | 0.25 | 0.60 | 13225 |
+| S4.8 | dino_weight=1.0, conf=0.15 | 0.335 | 0.66 | 0.54 | 14578 |
+| S4.9 | dino_weight=0.7, conf=0.35, pts=24 | 0.360 | 0.68 | 0.56 | 13968 |
+| S4.10 | dino_weight=0.7, conf=0.30, pts=24 | <0.360 | — | — | — |
+| **S4.12** | **dino_weight=0.7, conf=0.35, pts=28, max=30** | **0.377** | **0.64** | **0.62** | **19081** |
 
 ### Key insight (S3.4)
 
 DINOv2 proposals snap to a 14px grid → coarse boxes → IoU < 0.5. Fix: **SAM2 AMG proposes, DINOv2 scores**. Architecture swap alone: mAP 0 → 0.022.
 
-### Sprint 4 progression
+### Sprint 4 progression — what each change delivered
 
-| Step | Change | Effect |
-|------|--------|--------|
-| E4 | SAM2 fine-tuned with **point** prompts (matches AMG runtime) | Better mask shapes at IoU@0.5 |
-| E2 | k=4 k-means prototypes (green/yellow/red/occluded) | Precision +0.22, recall +0.08 |
-| E1 | Soft coverage-weighted cosine scoring | Better calibration for small tomatoes |
-| S4.1 (failed) | Hard negatives mined under wrong (single-mean) query at λ=1.2 | Over-suppression: recall 0.09 |
-| **S4.2** | **k4 query + background-mean neg λ=1.0** | **mAP 0.170 → 0.287 (+69%)** |
+| Step | Change | Cumulative mAP |
+|------|--------|----------------|
+| E4 | Point-prompt SAM2 fine-tune + E1 soft coverage | baseline |
+| E2 | k=4 k-means prototypes | 0.287 (+69% vs S3) |
+| pts=24, max=30 | More proposals, cap lifted | 0.328 |
+| Score fusion | dino_weight=0.7 + conf=0.35 | 0.360 |
+| pts=28 | 784 proposals, 18.5px grid spacing | **0.377 (+121% vs S3)** |
 
-**Next:** E3 semantic detector, pts=24, or conf=0.15 sweep to push recall above 0.50. See [docs/SPRINT4_ARCHITECTURE.md](docs/SPRINT4_ARCHITECTURE.md).
+**Next unlock:** E6 LoRA DINOv2 (needs ROCm gfx1151 fix). See [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md) and [docs/SPRINT4_ARCHITECTURE.md](docs/SPRINT4_ARCHITECTURE.md).
