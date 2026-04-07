@@ -103,15 +103,6 @@ def main() -> None:
     parser.add_argument("--amg-points", type=int, default=20)
     parser.add_argument("--confidence", type=float, default=0.2)
     parser.add_argument(
-        "--query-embedding", type=Path, default=None,
-        help=(
-            "Path to the query embedding used during FP collection. "
-            "MUST match the embedding you will use at eval time — FPs are "
-            "query-dependent. Default: models/query_embedding.pt (single mean). "
-            "Pass models/query_embedding_k4.pt when evaluating with k=4 prototypes."
-        ),
-    )
-    parser.add_argument(
         "--negative-weight", type=float, default=0.0,
         help=(
             "Contrastive weight during mining run. Set to 0.0 so the detector "
@@ -163,22 +154,13 @@ def main() -> None:
                 (float(row["x1"]), float(row["y1"]), float(row["x2"]), float(row["y2"]))
             )
 
-    query_emb_path = None
-    if args.query_embedding:
-        p = args.query_embedding if args.query_embedding.is_absolute() else repo_root / args.query_embedding
-        query_emb_path = str(p)
-
-    # Load detector (negative_weight=0 so we collect un-suppressed FPs).
-    # query_embedding_path MUST match the embedding used at eval time — the FPs
-    # this detector produces are query-dependent. Mismatching query and mined
-    # negatives produces a negative centroid near the wrong region of feature space.
+    # Load detector (negative_weight=0 so we collect un-suppressed FPs)
     detector = SAM2AMGDetector(
         device=device,
         confidence_threshold=args.confidence,
         points_per_side=args.amg_points,
         nms_iou_threshold=args.nms_iou,
         negative_weight=args.negative_weight,
-        query_embedding_path=query_emb_path,
     )
 
     # Load DINOv2 separately (detector already holds it, but we need patch tokens
@@ -266,16 +248,13 @@ def main() -> None:
     logger.info("Saved hard-negative embedding to %s (shape=%s)", out, tuple(hard_neg.shape))
     logger.info("")
     logger.info("Eval with the new hard-negative embedding:")
-    used_query = query_emb_path or "models/query_embedding.pt (default)"
     logger.info(
         "  AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES=\"\" PYTHONPATH=perception "
         "python3 perception/eval/run_eval.py "
         "--val-list data/val_list.txt --gt-csv data/val_gt.csv "
         "--detector sam2_amg --amg-points 20 --confidence 0.2 "
-        "--nms-iou 0.5 --negative-weight 0.5 "
-        "--query-embedding %s "
-        "--negative-embedding models/hard_negative_embedding.pt",
-        used_query,
+        "--negative-weight 1.2 --nms-iou 0.5 "
+        "--query-embedding models/query_embedding.pt"
     )
     logger.info(
         "  Use --negative-embedding models/hard_negative_embedding.pt in run_eval.py "

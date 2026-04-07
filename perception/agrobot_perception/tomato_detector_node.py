@@ -91,8 +91,8 @@ from agrobot_perception.utils.image_utils import (
     preprocess_for_dino,
     draw_detection_overlay,
 )
-from agrobot_perception.detectors.dino_sam2_detector import (
-    DINOv2SAM2Detector,
+from agrobot_perception.detectors.sam2_amg_detector import (
+    SAM2AMGDetector,
     _select_device,
 )
 
@@ -133,7 +133,7 @@ class TomatoDetectorNode(Node):
         # Declare all parameters with defaults. Users can override via:
         #   ros2 run agrobot_perception tomato_detector --ros-args -p confidence_threshold:=0.7
         # Or in a launch file (see launch/perception.launch.py).
-        self.declare_parameter("confidence_threshold", 0.5)
+        self.declare_parameter("confidence_threshold", 0.35)
         self.declare_parameter("input_width", 518)
         self.declare_parameter("input_height", 518)
         self.declare_parameter("publish_debug_image", True)
@@ -143,6 +143,16 @@ class TomatoDetectorNode(Node):
         # empty detections and safe_to_pick=False (FM-1 in FAILURE_MODES.md).
         # Set to 0 to disable the watchdog entirely.
         self.declare_parameter("watchdog_timeout_ms", 2000)
+        # SAM2AMGDetector parameters — S4.12 production config.
+        # Override at launch: ros2 launch ... amg_points_per_side:=28
+        self.declare_parameter("amg_points_per_side", 28)
+        self.declare_parameter("max_detections", 30)
+        self.declare_parameter("nms_iou_threshold", 0.5)
+        self.declare_parameter("dino_score_weight", 0.7)
+        self.declare_parameter("negative_weight", 1.0)
+        self.declare_parameter("query_embedding_path", "models/query_embedding_k4.pt")
+        self.declare_parameter("negative_embedding_path", "models/negative_embedding.pt")
+        self.declare_parameter("sam2_checkpoint", "")
 
         self._conf_threshold = self.get_parameter("confidence_threshold").value
         self._input_size = (
@@ -157,13 +167,26 @@ class TomatoDetectorNode(Node):
         self._watchdog_timeout_ms: int = self.get_parameter("watchdog_timeout_ms").value
         self._last_frame_time: float = 0.0
 
+        _query_emb = self.get_parameter("query_embedding_path").value or None
+        _neg_emb = self.get_parameter("negative_embedding_path").value or None
+        _sam2_ckpt = self.get_parameter("sam2_checkpoint").value or None
+
         # ── Core Components ───────────────────────────────────────────────────
         self._bridge = CvBridge()
-        # Sprint 2: DINOv2+SAM2 zero-shot detector.
-        # Sprint 3: swap for MIGraphX-optimized ONNX export (ROCm edge).
-        self._detector = DINOv2SAM2Detector(
+        # SAM2AMGDetector: Sprint 4 production detector (mAP=0.377, S4.12).
+        # SAM2 AMG proposes pixel-precise masks; DINOv2 scores for tomatoness.
+        # Parameters match the S4.12 best config in REPRODUCE.md.
+        self._detector = SAM2AMGDetector(
             device=_select_device(),
             confidence_threshold=self._conf_threshold,
+            points_per_side=self.get_parameter("amg_points_per_side").value,
+            max_detections=self.get_parameter("max_detections").value,
+            nms_iou_threshold=self.get_parameter("nms_iou_threshold").value,
+            dino_score_weight=self.get_parameter("dino_score_weight").value,
+            negative_weight=self.get_parameter("negative_weight").value,
+            query_embedding_path=_query_emb,
+            negative_embedding_path=_neg_emb,
+            sam2_checkpoint=_sam2_ckpt,
         )
 
         # ── Subscribers ───────────────────────────────────────────────────────

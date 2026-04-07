@@ -11,6 +11,10 @@
 
 ## Current best (mAP 0.377 — Sprint 4, S4.12)
 
+> **Why this config:** pts=32 gives +0.001 mAP but costs 3s/frame and drops precision from 0.64→0.61.
+> For a robot harvesting system, false positives (reaching for leaves) are more costly than marginal recall loss.
+> S4.12 is the better engineering tradeoff.
+
 ```bash
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   python3 perception/eval/run_eval.py \
@@ -24,12 +28,15 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --dino-weight 0.7 \
   --query-embedding models/query_embedding_k4.pt \
   --negative-embedding models/negative_embedding.pt \
-  --negative-weight 1.0
+  --negative-weight 1.0 \
+  --visualize-dir eval_reports/s4_final
 ```
 
-**Requirements:** `query_embedding_k4.pt`, `negative_embedding.pt`, `sam2_tomato_finetuned.pt` (point-prompt version). ~19 s/frame on NucBox CPU.
+**Result:** mAP=0.377 | Precision=0.640 | Recall=0.616 | ~19 s/frame (CPU)
 
-Add `--visualize-dir eval_reports/s4_best` for HTML report. View: `cd eval_reports/s4_best && python3 -m http.server 8000` → http://localhost:8000
+**Requirements:** `query_embedding_k4.pt`, `negative_embedding.pt`, `sam2_tomato_finetuned.pt` (point-prompt version, Sprint 4).
+
+View report: `cd eval_reports/s4_final && python3 -m http.server 8000` → http://localhost:8000 (GT=green, TP=cyan, FP=red)
 
 > **NucBox:** `AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES=""` required (ROCm blocked on gfx1151). See [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md).
 
@@ -111,6 +118,7 @@ python3 perception/tools/build_val_gt_csv.py \
 | S4.9 | dino_weight=0.7, conf=0.35, pts=24 | 0.360 | 0.68 | 0.56 | 13968 |
 | S4.10 | dino_weight=0.7, conf=0.30, pts=24 | <0.360 | — | — | — |
 | **S4.12** | **dino_weight=0.7, conf=0.35, pts=28, max=30** | **0.377** | **0.64** | **0.62** | **19081** |
+| S4.13 | pts=32, max=35 (recall-chasing) | 0.378 | 0.61 | 0.67 | 21883 |
 
 ### Key insight (S3.4)
 
