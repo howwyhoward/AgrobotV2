@@ -142,7 +142,9 @@ class TomatoDetectorNode(Node):
         # Watchdog: if no camera frame arrives within this window, publish
         # empty detections and safe_to_pick=False (FM-1 in FAILURE_MODES.md).
         # Set to 0 to disable the watchdog entirely.
-        self.declare_parameter("watchdog_timeout_ms", 2000)
+        # Watchdog timeout must exceed worst-case inference time (~17s on CPU).
+        # Default 60s prevents false-positives during SAM2+DINOv2 processing.
+        self.declare_parameter("watchdog_timeout_ms", 60000)
         # SAM2AMGDetector parameters — S4.12 production config.
         # Override at launch: ros2 launch ... amg_points_per_side:=28
         self.declare_parameter("amg_points_per_side", 28)

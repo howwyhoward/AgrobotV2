@@ -1,19 +1,90 @@
 # Reproducibility — Agrobot TOM v2
 
-## Quick start
+---
 
-| Environment | Command |
-|-------------|---------|
-| Mac (Docker) | `./compose.sh run --rm dev bash` |
-| NucBox (ROCm) | `./deployment/docker/run_rocm.sh bash` |
+## Live ROS 2 pipeline — NucBox [3 terminals]
+
+Open three separate terminal windows on the NucBox. Run them in order.
+
+### Terminal 1 — Camera
+```bash
+./deployment/docker/run_rocm.sh bash
+
+source /opt/ros/jazzy/setup.bash
+export ROS_DOMAIN_ID=42
+
+ros2 launch realsense2_camera rs_launch.py \
+  align_depth.enable:=true \
+  pointcloud.enable:=true
+```
+Wait for `RealSense Node Is Up!` before proceeding.
+
+### Terminal 2 — Detector
+```bash
+docker exec -it $(docker ps -q) bash
+
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select agrobot_perception --symlink-install
+source /workspace/install/setup.bash
+export ROS_DOMAIN_ID=42
+
+ros2 launch agrobot_perception perception.launch.py \
+  depth_topic:=/camera/camera/depth/image_rect_raw \
+  depth_camera_info_topic:=/camera/camera/depth/camera_info
+```
+Wait for `TomatoDetectorNode initialized` before proceeding.
+
+> `AGROBOT_FORCE_CPU=1`, `HIP_VISIBLE_DEVICES=-1`, `ROCR_VISIBLE_DEVICES=-1` are baked
+> into the launch file via `additional_env` — no need to export them manually.
+>
+> `colcon build` only needed once per container session (or after code changes).
+> Do NOT set `PYTHONPATH` — it breaks `ros2`.
+
+### Terminal 3 — Verify
+```bash
+docker exec -it $(docker ps -q) bash
+
+source /opt/ros/jazzy/setup.bash
+export ROS_DOMAIN_ID=42
+
+# Camera at ~15fps (USB 2.1 may show 1–5fps — normal, ignore)
+ros2 topic hz /camera/camera/color/image_raw
+
+# Detections every ~17s (SAM2+DINOv2 CPU inference time)
+ros2 topic echo /agrobot/detections
+
+# 3D centroids per tomato
+ros2 topic echo /agrobot/detections_3d --once
+
+# Arm gate signal
+ros2 topic echo /agrobot/safe_to_pick
+```
+
+### Expected output per processed frame
+```
+detections:
+  - bbox: center=(cx,cy) size=(w,h)
+    score: 0.6–0.9
+    label: tomato
+detections_3d:
+  - bbox.center.position: x=... y=... z=0.4–1.2  ← metres from camera
+safe_to_pick: True
+```
+
+### Known warnings (all safe to ignore)
+| Warning | Cause |
+|---|---|
+| `xFormers is not available` | Optional attention library, no impact |
+| `/opt/amdgpu/share/libdrm/amdgpu.ids: No such file or directory` | ROCm driver gap, CPU fallback active |
+| `cannot import name '_C' from 'sam2'` | SAM2 C++ extension skipped, results unaffected |
+| `Device connected using a 2.1 port. Reduced performance expected.` | Plug into USB 3 port for full 30fps |
+| `get_xu(ctrl=1) failed! Device or resource busy` | IMU bandwidth issue on USB 2.1, IMU unused |
 
 ---
 
-## Current best (mAP 0.377 — Sprint 4, S4.12)
+## Quick start (eval only, no camera)
 
-> **Why this config:** pts=32 gives +0.001 mAP but costs 3s/frame and drops precision from 0.64→0.61.
-> For a robot harvesting system, false positives (reaching for leaves) are more costly than marginal recall loss.
-> S4.12 is the better engineering tradeoff.
+## Current best (mAP 0.377 — Sprint 4, S4.12)
 
 ```bash
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
