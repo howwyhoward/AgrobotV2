@@ -44,10 +44,19 @@ if [ -d /dev/bus/usb ]; then
   VOLUME_ARGS+=(-v /dev/bus/usb:/dev/bus/usb)
 fi
 
+# RealSense video device passthrough (/dev/video0–N).
+# The camera is visible to the host (lsusb shows Intel RealSense) but Docker
+# blocks /dev/video* by default. Pass every video node that exists at launch time.
+VIDEO_DEVICE_ARGS=()
+for dev in /dev/video*; do
+  [ -e "$dev" ] && VIDEO_DEVICE_ARGS+=(--device="$dev")
+done
+
 docker run --rm -it \
   --device=/dev/kfd \
   --device=/dev/dri \
   "${GROUP_ADD_ARGS[@]}" \
+  "${VIDEO_DEVICE_ARGS[@]}" \
   "${VOLUME_ARGS[@]}" \
   -w /workspace \
   "$IMAGE" \
