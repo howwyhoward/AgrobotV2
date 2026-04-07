@@ -127,6 +127,16 @@ def generate_launch_description() -> LaunchDescription:
         name="tomato_detector",
         namespace="agrobot",
         output="screen",
+        # Force CPU and disable ROCm at the OS level for this node's process.
+        # SAM2's C++ extensions probe the AMD GPU driver at import time regardless
+        # of the Python device flag, triggering a gfx1151 kernel crash. Setting
+        # these here guarantees they are set for the spawned process, not just
+        # inherited from the shell (which ros2 launch does not reliably propagate).
+        additional_env={
+            "AGROBOT_FORCE_CPU": "1",
+            "HIP_VISIBLE_DEVICES": "-1",
+            "ROCR_VISIBLE_DEVICES": "-1",
+        },
         remappings=[
             ("/camera/image_raw", LaunchConfiguration("camera_topic")),
         ],
