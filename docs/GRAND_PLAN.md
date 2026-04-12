@@ -146,17 +146,24 @@ So: **yes**, the grand plan below addresses all five. Evaluation, 3D, CI, and ab
 
 ## Next Actions (Start Here)
 
-You are in **Sprint 2**. Do these in order:
+You are in **Sprint 4**. Sprints 1–3 are complete (MIGraphX GPU deferred — see
+`docs/SPRINT3_ROCM_ISSUE.md`). Current perception mAP: **0.377** (S4.12 config).
 
-1. **S2.1.1** — Test RealSense + perception on NucBox (camera plugged in).
-2. **S2.1.2** – **S2.1.3** — Get a val set (Laboro Tomato or KUTomaData) and a val list.
-3. **S2.2.1** – **S2.2.3** — Implement eval script + REPRODUCE.md.
-4. **S2.3.1** – **S2.3.3** — Add depth → 3D in the perception node.
-5. **S2.4.1** – **S2.4.2** — Add CI workflow and ensure tests pass.
-6. **S2.5.1** – **S2.5.3** — DINOv2-only ablation and document in REPRODUCE.md.
-7. **S2.6.1** – **S2.6.2** — SAM2 fine-tuning on NucBox and re-run eval.
+See `docs/SPRINT4_ARCHITECTURE.md` for the full Sprint 4 perception architecture and
+per-step mAP progression.
 
-After that, move to Sprint 3 (MIGraphX, ROSplat, failure modes), then Sprint 4 (Qwen-VL, HIL).
+### Immediate (Howard)
+
+1. **tomato_spatial_node** — Build NODE 2: clip PointCloud2 to each bbox, fit
+   sphere (RANSAC algebraic LS), publish `/agrobot/tomato_spatial` JSON so
+   Dani's arm planner has 3D centroid + sphere extents. ✅ *Done.*
+2. **E6 LoRA DINOv2** — Fine-tune DINOv2 last 4 blocks with LoRA rank-8 on Mac
+   (MPS) since ROCm is blocked. Rebuild `query_embedding_k4.pt`. Eval delta
+   expected +5–10 mAP points. See `perception/tools/finetune_dino_lora.py`.
+3. **Qwen-VL** (S4.1): Deploy quantized Qwen2.5-VL-3B on NucBox. Subscribe to
+   `/agrobot/tomato_spatial` (use `clipped_image`). Publish pick selection to
+   `/agrobot/pick_target`. This satisfies the Sprint 4 exit criterion.
+4. **HIL** (S4.2): Run 5 consecutive pick cycles. Document in `docs/HIL_RESULTS.md`.
 
 ---
 

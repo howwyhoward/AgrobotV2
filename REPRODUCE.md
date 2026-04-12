@@ -15,9 +15,24 @@ export ROS_DOMAIN_ID=42
 
 ros2 launch realsense2_camera rs_launch.py \
   align_depth.enable:=true \
+  pointcloud.enable:=true \
+  rgb_camera.color_profile:=640x480x30 \
+  depth_module.depth_profile:=640x480x30
+```
+
+Wait for `RealSense Node Is Up!` before starting Terminal 2.
+
+**Fallback (USB 2, or driver rejects 30 FPS):** drop the two `*_profile` lines — driver defaults to ~15 FPS:
+
+```bash
+ros2 launch realsense2_camera rs_launch.py \
+  align_depth.enable:=true \
   pointcloud.enable:=true
 ```
-Wait for `RealSense Node Is Up!` before proceeding.
+
+**Note:** Higher camera FPS does **not** speed up the detector (~15–20 s/frame on CPU); it only makes `/camera/...` topics smoother for debugging and other nodes.
+
+If a profile fails, list supported modes after the camera is running: `ros2 param describe /camera/camera rgb_camera.color_profile`.
 
 ### Terminal 2 — Detector
 ```bash
@@ -47,7 +62,7 @@ docker exec -it $(docker ps -q) bash
 source /opt/ros/jazzy/setup.bash
 export ROS_DOMAIN_ID=42
 
-# Camera at ~15fps (USB 2.1 may show 1–5fps — normal, ignore)
+# Camera: expect ~8–15 Hz with color+depth+pointcloud on USB 3; ~30 Hz if you use the optional 30 FPS launch above
 ros2 topic hz /camera/camera/color/image_raw
 
 # Detections every ~17s (SAM2+DINOv2 CPU inference time)
@@ -58,6 +73,9 @@ ros2 topic echo /agrobot/detections_3d --once
 
 # Arm gate signal
 ros2 topic echo /agrobot/safe_to_pick
+
+# Sphere-fit 3D localization from spatial node (NODE 2)
+ros2 topic echo /agrobot/tomato_spatial --once
 ```
 
 ### Expected output per processed frame
@@ -69,6 +87,10 @@ detections:
 detections_3d:
   - bbox.center.position: x=... y=... z=0.4–1.2  ← metres from camera
 safe_to_pick: True
+tomato_spatial (JSON):
+  [{"tomato_id": 0, "centroid": {"x": ..., "y": ..., "z": 0.4–1.2},
+    "sphere": {"radius": 0.025–0.06, "width": ..., "height": ..., "depth": ...},
+    "confidence": 0.6–0.9, "clipped_image": "<base64 JPEG>"}]
 ```
 
 ### Known warnings (all safe to ignore)
@@ -154,6 +176,45 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --query-embedding models/query_embedding_k4.pt \
   --amg-points 20 --confidence 0.2 --negative-weight 0.0 --nms-iou 0.5
 
+# Step 4 (E6) — LoRA DINOv2 fine-tune on Mac MPS (~2-4 h for 643 images, 10 epochs)
+# No AGROBOT_FORCE_CPU → auto-selects MPS on Apple Silicon
+PYTHONPATH=perception \
+  python3 perception/tools/finetune_dino_lora.py \
+  --train-images data/Laboro-Tomato/train/images \
+  --train-labels data/Laboro-Tomato/train/labels \
+  --output models/dino_lora.pt \
+  --epochs 10 --rank 8 --lora-blocks 4
+
+# Step 5 (E6) — Rebuild query embedding with LoRA backbone (~10 min on MPS)
+PYTHONPATH=perception \
+  python3 perception/tools/build_query_embedding.py \
+  --train-images data/Laboro-Tomato/train/images \
+  --train-labels data/Laboro-Tomato/train/labels \
+  --output models/query_embedding_lora_k4.pt \
+  --num-prototypes 4 \
+  --output-negative models/negative_embedding_lora.pt \
+  --dino-lora-path models/dino_lora.pt
+
+# Step 6 (E6) — Eval with LoRA to measure mAP delta (run on NucBox)
+AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
+  python3 perception/eval/run_eval.py \
+  --val-list data/val_list.txt \
+  --gt-csv data/val_gt.csv \
+  --detector sam2_amg \
+  --amg-points 28 \
+  --max-detections 30 \
+  --confidence 0.35 \
+  --nms-iou 0.5 \
+  --dino-weight 0.7 \
+  --query-embedding models/query_embedding_lora_k4.pt \
+  --negative-embedding models/negative_embedding_lora.pt \
+  --negative-weight 1.0 \
+  --dino-lora-path models/dino_lora.pt \
+  --visualize-dir eval_reports/e6_lora
+
+# Sync Mac models → NucBox (run from Mac)
+bash tools/network/setup/model_sync.sh --all
+
 # Sync Mac ↔ NucBox (run from Mac)
 bash tools/network/setup/model_sync.sh --pull   # NucBox → Mac
 bash tools/network/setup/model_sync.sh --all    # Mac → NucBox
@@ -189,6 +250,7 @@ python3 perception/tools/build_val_gt_csv.py \
 | S4.9 | dino_weight=0.7, conf=0.35, pts=24 | 0.360 | 0.68 | 0.56 | 13968 |
 | S4.10 | dino_weight=0.7, conf=0.30, pts=24 | <0.360 | — | — | — |
 | **S4.12** | **dino_weight=0.7, conf=0.35, pts=28, max=30** | **0.377** | **0.64** | **0.62** | **19081** |
+| E6 | + LoRA DINOv2 rank=8, lora_blocks=4 (steps 4-6 above) | TBD | — | — | — |
 | S4.13 | pts=32, max=35 (recall-chasing) | 0.378 | 0.61 | 0.67 | 21883 |
 
 ### Key insight (S3.4)

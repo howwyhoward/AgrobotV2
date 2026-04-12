@@ -120,6 +120,21 @@ def generate_launch_description() -> LaunchDescription:
         description="Publish annotated debug image on /agrobot/debug_image (Foxglove).",
     )
 
+    # ── Spatial node topics ────────────────────────────────────────────────────
+    pointcloud_topic_arg = DeclareLaunchArgument(
+        "pointcloud_topic",
+        default_value="/camera/camera/depth/color/points",
+        description=(
+            "PointCloud2 topic from RealSense (requires pointcloud.enable:=true). "
+            "Typical: /camera/camera/depth/color/points"
+        ),
+    )
+    camera_info_arg = DeclareLaunchArgument(
+        "camera_info_topic",
+        default_value="/camera/camera/color/camera_info",
+        description="CameraInfo for the color camera (used by tomato_spatial for intrinsics).",
+    )
+
     # ── Tomato Detector Node (Node 1) ──────────────────────────────────────────
     tomato_detector_node = Node(
         package="agrobot_perception",
@@ -160,11 +175,39 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # ── Tomato Spatial Node (Node 2) ───────────────────────────────────────────
+    # Consumes detections from Node 1 + PointCloud2 from the RealSense driver.
+    # Fits a sphere to each bbox cluster and publishes /agrobot/tomato_spatial.
+    # Enabled only when pointcloud_topic is non-empty (same pattern as depth 3D).
+    tomato_spatial_node = Node(
+        package="agrobot_perception",
+        executable="tomato_spatial",
+        name="tomato_spatial",
+        namespace="agrobot",
+        output="screen",
+        additional_env={
+            "AGROBOT_FORCE_CPU": "1",
+            "HIP_VISIBLE_DEVICES": "-1",
+            "ROCR_VISIBLE_DEVICES": "-1",
+        },
+        parameters=[
+            {
+                "pointcloud_topic": LaunchConfiguration("pointcloud_topic"),
+                "color_image_topic": LaunchConfiguration("camera_topic"),
+                "camera_info_topic": LaunchConfiguration("camera_info_topic"),
+                "detections_topic": "/agrobot/detections",
+                "publish_debug_image": LaunchConfiguration("publish_debug_image"),
+            }
+        ],
+    )
+
     return LaunchDescription(
         [
             camera_topic_arg,
             depth_topic_arg,
             depth_camera_info_arg,
+            pointcloud_topic_arg,
+            camera_info_arg,
             conf_threshold_arg,
             nms_iou_arg,
             amg_points_arg,
@@ -176,5 +219,6 @@ def generate_launch_description() -> LaunchDescription:
             sam2_ckpt_arg,
             publish_debug_arg,
             tomato_detector_node,
+            tomato_spatial_node,
         ]
     )

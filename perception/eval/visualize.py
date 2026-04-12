@@ -7,6 +7,7 @@ Used by run_eval.py when --visualize-dir is set.
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import cv2

@@ -28,8 +28,8 @@ setup(
     entry_points={
         "console_scripts": [
             # Format: "executable_name = package.module:main_function"
-            # This creates a `ros2 run agrobot_perception tomato_detector` command.
             "tomato_detector = agrobot_perception.tomato_detector_node:main",
+            "tomato_spatial = agrobot_perception.tomato_spatial_node:main",
         ],
     },
 )
