@@ -22,7 +22,7 @@ Data Flow
 ---------
   /camera/.../depth/color/points (PointCloud2)  ──┐
   /camera/.../color/image_raw    (Image)          ├─ cached latest
-  /camera/.../color/camera_info  (CameraInfo)  ──┘ (used when detections arrive)
+  /camera/.../color/camera_info  (CameraInfo)   ──┘ (used when detections arrive)
       │
   /agrobot/detections (Detection2DArray)
       │
@@ -273,25 +273,33 @@ class TomatoSpatialNode(Node):
             )
 
         # Parse the full cloud once and share the numpy array across all detections.
+        # read_points() returns a structured numpy array with named fields ('x','y','z')
+        # rather than a plain (N,3) array — itemsize=20 because the PointCloud2 wire
+        # format includes padding bytes even when only xyz fields are requested.
+        # We extract each field by name before stacking into a plain float32 array.
         try:
-            raw = list(
-                pc2.read_points(
-                    self._latest_cloud,
-                    field_names=("x", "y", "z"),
-                    skip_nans=True,
+            raw_struct = np.array(
+                list(
+                    pc2.read_points(
+                        self._latest_cloud,
+                        field_names=("x", "y", "z"),
+                        skip_nans=True,
+                    )
                 )
             )
         except Exception as exc:
             self.get_logger().error(f"PointCloud2 parsing failed: {exc}")
             return
 
-        if not raw:
+        if raw_struct.size == 0:
             self.get_logger().warn(
                 "Empty point cloud — nothing to fit.", throttle_duration_sec=5.0
             )
             return
 
-        all_points = np.array(raw, dtype=np.float32)  # (N, 3)
+        all_points = np.column_stack(
+            [raw_struct["x"], raw_struct["y"], raw_struct["z"]]
+        ).astype(np.float32)  # (N, 3)
         # Hard depth bounds: drop points behind the camera or beyond arm reach.
         all_points = all_points[
             (all_points[:, 2] > 0.05) & (all_points[:, 2] < 5.0)
