@@ -92,6 +92,37 @@ def clip_points_to_bbox(
     return points[mask]
 
 
+# ─── Depth Pre-Filter ─────────────────────────────────────────────────────────
+
+def filter_cluster_by_depth(
+    points: np.ndarray,
+    percentile_lo: float = 5.0,
+    percentile_hi: float = 60.0,
+) -> np.ndarray:
+    """Remove background depth points from a bbox cluster before sphere fitting.
+
+    At close range (<0.6 m) the bbox clip includes wall/surface points behind the
+    tomato. These inflate the fitted sphere radius because the algebraic solver
+    must find a sphere that encompasses both the tomato surface and distant background.
+
+    We keep only points whose Z depth falls within the [percentile_lo, percentile_hi]
+    percentile window of the cluster's Z distribution. The tomato surface occupies
+    the near (low-Z) portion; background clutter sits at higher Z values.
+
+    percentile_lo=5 discards noisy near-sensor outliers.
+    percentile_hi=60 cuts off the background tail while retaining the tomato arc.
+    """
+    if len(points) == 0:
+        return points
+    z = points[:, 2]
+    z_lo = float(np.percentile(z, percentile_lo))
+    z_hi = float(np.percentile(z, percentile_hi))
+    mask = (z >= z_lo) & (z <= z_hi)
+    filtered = points[mask]
+    # Fall back to the full cluster if filtering removes too many points.
+    return filtered if len(filtered) >= 4 else points
+
+
 # ─── Sphere Fitting ────────────────────────────────────────────────────────────
 
 def fit_sphere_algebraic(points: np.ndarray) -> tuple[np.ndarray, float]:

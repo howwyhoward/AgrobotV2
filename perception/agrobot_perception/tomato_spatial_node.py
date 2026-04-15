@@ -120,6 +120,7 @@ from agrobot_perception.utils.pointcloud_utils import (
     clip_points_to_bbox,
     compute_extents,
     crop_color_to_bbox,
+    filter_cluster_by_depth,
     fit_sphere_ransac,
 )
 
@@ -336,15 +337,21 @@ class TomatoSpatialNode(Node):
                 )
                 continue
 
+            # Strip background clutter before fitting — at close range (<0.6 m)
+            # the bbox clip includes wall/surface points at higher Z that inflate
+            # the sphere radius. Keep only the near-depth portion of the cluster.
+            cluster = filter_cluster_by_depth(cluster)
+
             center, radius, inliers = fit_sphere_ransac(
                 cluster,
                 n_iterations=self._ransac_iters,
                 inlier_dist=self._ransac_dist,
             )
 
-            # Tomatoes are 2–7 cm radius. A fit outside this range means the
-            # cluster contained too much background clutter or was a false positive.
-            if not (0.015 <= radius <= 0.075):
+            # Tomatoes are 2–10 cm radius (up to 20cm diameter covers beefsteak).
+            # A fit outside this range means residual background clutter or a
+            # false-positive detection with no spherical structure.
+            if not (0.015 <= radius <= 0.10):
                 self.get_logger().debug(
                     f"Tomato {i}: radius={radius:.3f}m outside [0.015, 0.075] — "
                     "sphere fit invalid, skipping."
