@@ -341,6 +341,16 @@ class TomatoSpatialNode(Node):
                 n_iterations=self._ransac_iters,
                 inlier_dist=self._ransac_dist,
             )
+
+            # Tomatoes are 2–7 cm radius. A fit outside this range means the
+            # cluster contained too much background clutter or was a false positive.
+            if not (0.015 <= radius <= 0.075):
+                self.get_logger().debug(
+                    f"Tomato {i}: radius={radius:.3f}m outside [0.015, 0.075] — "
+                    "sphere fit invalid, skipping."
+                )
+                continue
+
             width_m, height_m, depth_m = compute_extents(inliers)
 
             score = (

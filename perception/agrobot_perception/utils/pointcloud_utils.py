@@ -194,11 +194,14 @@ def fit_sphere_ransac(
 
     if best_count < min_inliers:
         # Algebraic fallback: RANSAC never found a stable consensus.
+        # The fallback fit is unconstrained — cap it so callers get a physically
+        # plausible radius even when the cluster contains background clutter.
         try:
             best_center, best_radius = fit_sphere_algebraic(points)
         except (np.linalg.LinAlgError, ValueError):
             best_center = points.mean(axis=0).astype(np.float32)
             best_radius = 0.03
+        best_radius = float(np.clip(best_radius, 0.005, max_radius_m))
         best_mask = np.ones(len(points), dtype=bool)
 
     return best_center, best_radius, points[best_mask]
