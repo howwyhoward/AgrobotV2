@@ -201,6 +201,27 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # ── Tomato Tracker Node (NODE 2b) ──────────────────────────────────────────
+    # Consumes /agrobot/tomato_spatial, assigns persistent IDs across frames,
+    # EMA-smooths centroids, and publishes /agrobot/tomato_tracks.
+    # Qwen-VL and the arm planner subscribe to tomato_tracks, not tomato_spatial.
+    tomato_tracker_node = Node(
+        package="agrobot_perception",
+        executable="tomato_tracker",
+        name="tomato_tracker",
+        namespace="agrobot",
+        output="screen",
+        parameters=[
+            {
+                "spatial_topic": "/agrobot/tomato_spatial",
+                "tracks_topic": "/agrobot/tomato_tracks",
+                "match_threshold_m": 0.08,
+                "max_missed_frames": 3,
+                "smoothing_alpha": 0.4,
+            }
+        ],
+    )
+
     return LaunchDescription(
         [
             camera_topic_arg,
@@ -220,5 +241,6 @@ def generate_launch_description() -> LaunchDescription:
             publish_debug_arg,
             tomato_detector_node,
             tomato_spatial_node,
+            tomato_tracker_node,
         ]
     )

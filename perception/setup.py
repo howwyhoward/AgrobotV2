@@ -30,6 +30,7 @@ setup(
             # Format: "executable_name = package.module:main_function"
             "tomato_detector = agrobot_perception.tomato_detector_node:main",
             "tomato_spatial = agrobot_perception.tomato_spatial_node:main",
+            "tomato_tracker = agrobot_perception.tomato_tracker_node:main",
         ],
     },
 )

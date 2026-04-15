@@ -1,0 +1,305 @@
+"""
+tomato_tracker_node.py — Persistent Tomato Track Management (NODE 2b)
+
+Architecture
+------------
+Sits between tomato_spatial_node (NODE 2) and the arm planner / Qwen-VL (NODE 3/4).
+Consumes the per-frame JSON from /agrobot/tomato_spatial and maintains a registry
+of persistent tracks across frames so that:
+
+  1. Each physical tomato keeps the same ID across detection cycles.
+     Without this, tomato_id resets to 0,1,2 every frame (detection order).
+     With tracking, persistent_id=3 refers to the same physical tomato
+     across 10 consecutive frames until it is picked or leaves the scene.
+
+  2. Centroid noise is suppressed via exponential moving average (EMA).
+     Sphere-fit jitter of ±3 cm at 0.5 m depth is averaged away over
+     3–4 frames, giving the arm planner a stable pick target.
+
+  3. Picked tomatoes are removed from the active list.
+     The arm planner publishes to /agrobot/mark_picked with the persistent_id.
+     That track is then suppressed from /agrobot/tomato_tracks so Qwen-VL and
+     the planner don't re-select an empty location on the next cycle.
+
+Algorithm (nearest-neighbour in 3D):
+  For each new detection centroid:
+    Find closest persistent track within match_threshold_m (default 8 cm).
+    If match found:  update track centroid via EMA, reset missed counter.
+    If no match:     create new track with next available persistent_id.
+  For each track not matched this frame:
+    Increment missed_frames.
+    If missed_frames > max_missed_frames: drop the track.
+
+Data Flow
+---------
+  /agrobot/tomato_spatial (String JSON)
+      │
+      ▼
+  TomatoTrackerNode._spatial_callback()
+      │  nearest-neighbour match + EMA update
+      ▼
+  /agrobot/tomato_tracks (String JSON)
+      │  same schema as /agrobot/tomato_spatial, with extra fields:
+      │    persistent_id  int    stable ID across frames
+      │    age            int    how many frames this track has been active
+      │    smoothed       bool   True once EMA has 3+ observations
+      ▼
+  Qwen-VL node / Arm planner (NODE 3 / 4)
+
+Topics
+------
+  Subscribed:
+    /agrobot/tomato_spatial   std_msgs/String  Per-frame sphere-fit JSON
+    /agrobot/mark_picked      std_msgs/String  JSON {"persistent_id": N}
+                                               Published by arm planner after pick
+
+  Published:
+    /agrobot/tomato_tracks    std_msgs/String  Tracked + smoothed JSON array
+
+Parameters
+----------
+  match_threshold_m    float   Max centroid distance to match a track (default: 0.08 m)
+  max_missed_frames    int     Drop track after this many missed frames (default: 3)
+  smoothing_alpha      float   EMA weight for new observation (default: 0.4)
+                               Lower = smoother but more lag. 0.4 converges in ~3 frames.
+  spatial_topic        string  Input topic (default: /agrobot/tomato_spatial)
+  tracks_topic         string  Output topic (default: /agrobot/tomato_tracks)
+"""
+
+from __future__ import annotations
+
+import json
+import math
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+
+
+# ─── Track Registry ────────────────────────────────────────────────────────────
+
+class Track:
+    """One persistent tomato track.
+
+    Centroid is maintained as a smoothed EMA estimate. The most recent
+    clipped_image JPEG is carried through for Qwen-VL consumption.
+    """
+
+    def __init__(
+        self,
+        persistent_id: int,
+        tomato: dict,
+        alpha: float,
+    ) -> None:
+        self.persistent_id = persistent_id
+        self.centroid = dict(tomato["centroid"])       # {"x", "y", "z"}
+        self.sphere = dict(tomato["sphere"])
+        self.confidence = tomato["confidence"]
+        self.clipped_image = tomato.get("clipped_image")
+        self.missed_frames = 0
+        self.age = 1
+        self._alpha = alpha
+        self._obs = 1                                  # observations so far
+
+    def update(self, tomato: dict) -> None:
+        """Apply EMA update from a new matched observation."""
+        alpha = self._alpha
+        c_new = tomato["centroid"]
+        # EMA: new_est = alpha * observation + (1 - alpha) * old_est
+        self.centroid["x"] = alpha * c_new["x"] + (1 - alpha) * self.centroid["x"]
+        self.centroid["y"] = alpha * c_new["y"] + (1 - alpha) * self.centroid["y"]
+        self.centroid["z"] = alpha * c_new["z"] + (1 - alpha) * self.centroid["z"]
+
+        # Sphere extents: update with same EMA so radius converges
+        s_new = tomato["sphere"]
+        for key in ("radius", "width", "height", "depth"):
+            self.sphere[key] = (
+                alpha * s_new[key] + (1 - alpha) * self.sphere[key]
+            )
+
+        self.confidence = tomato["confidence"]
+        # Always keep the freshest JPEG for Qwen-VL
+        if tomato.get("clipped_image"):
+            self.clipped_image = tomato["clipped_image"]
+
+        self.missed_frames = 0
+        self.age += 1
+        self._obs += 1
+
+    def to_dict(self) -> dict:
+        return {
+            "persistent_id": self.persistent_id,
+            "tomato_id": self.persistent_id,       # alias so consumers see a stable id
+            "centroid": {k: round(v, 4) for k, v in self.centroid.items()},
+            "sphere": {k: round(v, 4) for k, v in self.sphere.items()},
+            "confidence": round(self.confidence, 4),
+            "clipped_image": self.clipped_image,
+            "age": self.age,
+            "smoothed": self._obs >= 3,
+        }
+
+
+def _euclidean(a: dict, b: dict) -> float:
+    """3D Euclidean distance between two centroid dicts {x, y, z}."""
+    return math.sqrt(
+        (a["x"] - b["x"]) ** 2
+        + (a["y"] - b["y"]) ** 2
+        + (a["z"] - b["z"]) ** 2
+    )
+
+
+# ─── Node ──────────────────────────────────────────────────────────────────────
+
+class TomatoTrackerNode(Node):
+    """ROS 2 node that assigns persistent IDs to tomato detections across frames."""
+
+    def __init__(self) -> None:
+        super().__init__("tomato_tracker")
+
+        # ── Parameters ────────────────────────────────────────────────────────
+        # 8 cm threshold: wider than ±3 cm sphere-fit jitter but tighter than
+        # typical tomato-to-tomato spacing (~10–15 cm on a vine).
+        self.declare_parameter("match_threshold_m", 0.08)
+        # 3 missed frames ≈ 51 s on CPU. A picked tomato is gone within 1 cycle.
+        self.declare_parameter("max_missed_frames", 3)
+        # alpha=0.4: new observation weighted 40%, history 60%. Converges in ~4 frames.
+        self.declare_parameter("smoothing_alpha", 0.4)
+        self.declare_parameter("spatial_topic", "/agrobot/tomato_spatial")
+        self.declare_parameter("tracks_topic", "/agrobot/tomato_tracks")
+
+        self._threshold: float = self.get_parameter("match_threshold_m").value
+        self._max_missed: int = self.get_parameter("max_missed_frames").value
+        self._alpha: float = self.get_parameter("smoothing_alpha").value
+        spatial_topic: str = self.get_parameter("spatial_topic").value
+        tracks_topic: str = self.get_parameter("tracks_topic").value
+
+        # ── State ─────────────────────────────────────────────────────────────
+        # tracks: persistent_id → Track
+        self._tracks: dict[int, Track] = {}
+        self._next_id: int = 0
+        self._frame: int = 0
+        # picked_ids: suppressed from output until track is naturally lost
+        self._picked_ids: set[int] = set()
+
+        # ── Subscriptions ─────────────────────────────────────────────────────
+        self.create_subscription(
+            String, spatial_topic, self._spatial_callback, 10
+        )
+        # Arm planner publishes {"persistent_id": N} here after a successful pick.
+        self.create_subscription(
+            String, "/agrobot/mark_picked", self._mark_picked_callback, 10
+        )
+
+        # ── Publishers ────────────────────────────────────────────────────────
+        self._tracks_pub = self.create_publisher(String, tracks_topic, 10)
+
+        self.get_logger().info(
+            f"TomatoTrackerNode initialized. "
+            f"threshold={self._threshold*100:.0f}cm  "
+            f"max_missed={self._max_missed}  "
+            f"alpha={self._alpha}"
+        )
+
+    # ── Callbacks ─────────────────────────────────────────────────────────────
+
+    def _mark_picked_callback(self, msg: String) -> None:
+        """Arm planner calls this to suppress a track after picking."""
+        try:
+            data = json.loads(msg.data)
+            pid = int(data["persistent_id"])
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            self.get_logger().error(f"mark_picked parse error: {exc}")
+            return
+        self._picked_ids.add(pid)
+        # Also immediately remove from active registry so it stops publishing.
+        self._tracks.pop(pid, None)
+        self.get_logger().info(f"Tomato persistent_id={pid} marked as picked — suppressed.")
+
+    def _spatial_callback(self, msg: String) -> None:
+        """Process one frame of sphere-fit detections and update the registry."""
+        try:
+            tomatoes: list[dict] = json.loads(msg.data)
+        except json.JSONDecodeError as exc:
+            self.get_logger().error(f"JSON parse error: {exc}")
+            return
+
+        self._frame += 1
+
+        # ── Step 1: match new detections to existing tracks ────────────────
+        # Greedy nearest-neighbour: sort by detection order, match closest track.
+        matched_track_ids: set[int] = set()
+
+        for tomato in tomatoes:
+            c = tomato["centroid"]
+            best_pid: int | None = None
+            best_dist = float("inf")
+
+            for pid, track in self._tracks.items():
+                if pid in matched_track_ids:
+                    continue  # already claimed this frame
+                if pid in self._picked_ids:
+                    continue
+                dist = _euclidean(c, track.centroid)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_pid = pid
+
+            if best_pid is not None and best_dist < self._threshold:
+                # Update existing track
+                self._tracks[best_pid].update(tomato)
+                matched_track_ids.add(best_pid)
+            else:
+                # New tomato — no close existing track
+                new_pid = self._next_id
+                self._next_id += 1
+                self._tracks[new_pid] = Track(new_pid, tomato, self._alpha)
+                matched_track_ids.add(new_pid)
+
+        # ── Step 2: age unmatched tracks, drop stale ones ──────────────────
+        to_drop = []
+        for pid, track in self._tracks.items():
+            if pid not in matched_track_ids:
+                track.missed_frames += 1
+                if track.missed_frames > self._max_missed:
+                    to_drop.append(pid)
+                    self.get_logger().info(
+                        f"Track persistent_id={pid} dropped "
+                        f"(missed {track.missed_frames} frames)."
+                    )
+
+        for pid in to_drop:
+            self._tracks.pop(pid)
+            self._picked_ids.discard(pid)
+
+        # ── Step 3: publish active, non-picked tracks ──────────────────────
+        active = [
+            t.to_dict()
+            for t in self._tracks.values()
+            if t.persistent_id not in self._picked_ids
+        ]
+
+        out = String()
+        out.data = json.dumps(active)
+        self._tracks_pub.publish(out)
+
+        ids = [t["persistent_id"] for t in active]
+        self.get_logger().info(
+            f"Frame {self._frame}: {len(active)} active tracks {ids} "
+            f"(registry size={len(self._tracks)})."
+        )
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = TomatoTrackerNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

@@ -141,6 +141,20 @@ py_binary(
     target_compatible_with = ["@platforms//os:linux"],
 )
 
+# ─── tomato_tracker: Persistent Track Manager (NODE 2b) ──────────────────────
+#
+# Nearest-neighbour 3D tracker: consumes /agrobot/tomato_spatial, assigns
+# persistent_id across frames, EMA-smooths centroids, suppresses picked tomatoes.
+# Pure Python (json + math) — no torch, no numpy dependency.
+py_binary(
+    name = "tomato_tracker",
+    srcs = ["agrobot_perception/tomato_tracker_node.py"],
+    main = "agrobot_perception/tomato_tracker_node.py",
+    deps = [":agrobot_perception_lib"],
+    imports = ["."],
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
 # ─── image_utils_test: Unit Tests ────────────────────────────────────────────
 #
 # `py_test` targets run with `bazel test //perception:image_utils_test`.
