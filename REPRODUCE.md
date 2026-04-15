@@ -2,9 +2,9 @@
 
 ---
 
-## Live ROS 2 pipeline — NucBox [3 terminals]
+## Live ROS 2 pipeline — NucBox [4 terminals]
 
-Open three separate terminal windows on the NucBox. Run them in order.
+Open four separate terminal windows on the NucBox. Run them in order.
 
 ### Terminal 1 — Camera
 ```bash
@@ -34,7 +34,7 @@ ros2 launch realsense2_camera rs_launch.py \
 
 If a profile fails, list supported modes after the camera is running: `ros2 param describe /camera/camera rgb_camera.color_profile`.
 
-### Terminal 2 — Detector
+### Terminal 2 — Detector (NODE 1)
 ```bash
 docker exec -it $(docker ps -q) bash
 
@@ -47,6 +47,7 @@ ros2 launch agrobot_perception perception.launch.py \
   depth_topic:=/camera/camera/depth/image_rect_raw \
   depth_camera_info_topic:=/camera/camera/depth/camera_info
 ```
+
 Wait for `TomatoDetectorNode initialized` before proceeding.
 
 > `AGROBOT_FORCE_CPU=1`, `HIP_VISIBLE_DEVICES=-1`, `ROCR_VISIBLE_DEVICES=-1` are baked
@@ -55,42 +56,118 @@ Wait for `TomatoDetectorNode initialized` before proceeding.
 > `colcon build` only needed once per container session (or after code changes).
 > Do NOT set `PYTHONPATH` — it breaks `ros2`.
 
-### Terminal 3 — Verify
+### Terminal 3 — Spatial Node (NODE 2)
+```bash
+docker exec -it $(docker ps -q) bash
+
+source /opt/ros/jazzy/setup.bash
+source /workspace/install/setup.bash
+export ROS_DOMAIN_ID=42
+
+ros2 run agrobot_perception tomato_spatial
+```
+
+Wait for both of these log lines before proceeding:
+```
+[INFO] [tomato_spatial]: TomatoSpatialNode initialized. detections='/agrobot/detections' pointcloud='/camera/camera/depth/color/points'
+[INFO] [tomato_spatial]: Camera intrinsics cached: fx=... fy=... cx=... cy=... res=640×480
+```
+
+Then when the detector fires (~every 17s) you will see:
+```
+[INFO] [tomato_spatial]: Published 2/2 tomato spatial estimates.
+```
+
+> The spatial node subscribes to `/agrobot/detections` (from NODE 1), the point cloud,
+> and the color image. It fits a sphere to the point cloud cluster inside each bbox
+> and publishes 3D centroid + radius + JPEG crop for each tomato.
+
+### Terminal 4 — Verify
 ```bash
 docker exec -it $(docker ps -q) bash
 
 source /opt/ros/jazzy/setup.bash
 export ROS_DOMAIN_ID=42
 
-# Camera: expect ~8–15 Hz with color+depth+pointcloud on USB 3; ~30 Hz if you use the optional 30 FPS launch above
+# Camera: expect ~8–15 Hz with color+depth+pointcloud on USB 3
 ros2 topic hz /camera/camera/color/image_raw
 
 # Detections every ~17s (SAM2+DINOv2 CPU inference time)
 ros2 topic echo /agrobot/detections
 
-# 3D centroids per tomato
-ros2 topic echo /agrobot/detections_3d --once
-
 # Arm gate signal
 ros2 topic echo /agrobot/safe_to_pick
 
-# Sphere-fit 3D localization from spatial node (NODE 2)
-ros2 topic echo /agrobot/tomato_spatial --once
+# Sphere-fit 3D localization (NODE 2) — pretty-print both tomatoes
+cat > /tmp/show_spatial.py << 'EOF'
+import sys, json
+raw = sys.stdin.read()
+start = raw.index('[')
+end = raw.rindex(']') + 1
+for t in json.loads(raw[start:end]):
+    print(f"\n--- Tomato {t['tomato_id']} ---")
+    print(f"  centroid : x={t['centroid']['x']:+.3f}  y={t['centroid']['y']:+.3f}  z={t['centroid']['z']:.3f} m")
+    print(f"  radius   : {t['sphere']['radius']*100:.1f} cm")
+    print(f"  size     : {t['sphere']['width']*100:.1f} w x {t['sphere']['height']*100:.1f} h x {t['sphere']['depth']*100:.1f} d cm")
+    print(f"  score    : {t['confidence']:.3f}")
+    print(f"  has_jpeg : {'yes' if t['clipped_image'] else 'no'}")
+EOF
+
+ros2 topic echo --full-length /agrobot/tomato_spatial --once | python3 /tmp/show_spatial.py
 ```
 
-### Expected output per processed frame
+### Terminal 5 — Save JPEG crops to disk (optional, for Mac visualization)
+```bash
+# On NucBox host first: git pull (gets tools/save_spatial_crops.py)
+# Then enter container:
+docker exec -it $(docker ps -q) bash
+
+source /opt/ros/jazzy/setup.bash
+source /workspace/install/setup.bash
+export ROS_DOMAIN_ID=42
+
+python3 tools/save_spatial_crops.py
 ```
+
+Each time the detector fires, JPEGs are saved to `eval_reports/spatial_crops/` with filenames encoding depth, radius, and score:
+```
+20260408_143022_f0001_t0_z0.38m_r4.9cm_s0.60.jpg
+20260408_143022_f0001_t1_z0.64m_r3.5cm_s0.48.jpg
+```
+
+**Pull to Mac over Tailscale (run from Mac terminal):**
+```bash
+bash tools/pull_crops.sh
+# Finder opens automatically to eval_reports/spatial_crops/
+```
+
+### Expected output per processed frame (2 tomatoes in scene)
+```
+# /agrobot/detections
 detections:
-  - bbox: center=(cx,cy) size=(w,h)
-    score: 0.6–0.9
-    label: tomato
-detections_3d:
-  - bbox.center.position: x=... y=... z=0.4–1.2  ← metres from camera
-safe_to_pick: True
-tomato_spatial (JSON):
-  [{"tomato_id": 0, "centroid": {"x": ..., "y": ..., "z": 0.4–1.2},
-    "sphere": {"radius": 0.025–0.06, "width": ..., "height": ..., "depth": ...},
-    "confidence": 0.6–0.9, "clipped_image": "<base64 JPEG>"}]
+  - bbox: center=(cx,cy) size=(w,h)  score: 0.6–0.9  label: tomato
+  - bbox: center=(cx,cy) size=(w,h)  score: 0.6–0.9  label: tomato
+
+# /agrobot/safe_to_pick
+data: True
+
+# /agrobot/tomato_spatial (Terminal 4 pretty-print)
+--- Tomato 0 ---
+  centroid : x=-0.062  y=+0.012  z=0.382 m
+  radius   : 4.9 cm
+  size     : 6.7 w x 4.3 h x 6.7 d cm
+  score    : 0.597
+  has_jpeg : yes
+
+--- Tomato 1 ---
+  centroid : x=+0.309  y=+0.003  z=0.642 m
+  radius   : 3.5 cm
+  size     : 2.6 w x 6.3 h x 3.9 d cm
+  score    : 0.480
+  has_jpeg : yes
+
+# Spatial node log (Terminal 3)
+[INFO] [tomato_spatial]: Published 2/2 tomato spatial estimates.
 ```
 
 ### Known warnings (all safe to ignore)
@@ -211,9 +288,6 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --negative-weight 1.0 \
   --dino-lora-path models/dino_lora.pt \
   --visualize-dir eval_reports/e6_lora
-
-# Sync Mac models → NucBox (run from Mac)
-bash tools/network/setup/model_sync.sh --all
 
 # Sync Mac ↔ NucBox (run from Mac)
 bash tools/network/setup/model_sync.sh --pull   # NucBox → Mac
