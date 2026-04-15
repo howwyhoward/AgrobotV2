@@ -348,10 +348,10 @@ class TomatoSpatialNode(Node):
                 inlier_dist=self._ransac_dist,
             )
 
-            # Tomatoes are 2–10 cm radius (up to 20cm diameter covers beefsteak).
+            # Tomatoes are 2–12 cm radius (up to 24cm diameter covers beefsteak).
             # A fit outside this range means residual background clutter or a
             # false-positive detection with no spherical structure.
-            if not (0.015 <= radius <= 0.10):
+            if not (0.015 <= radius <= 0.12):
                 self.get_logger().debug(
                     f"Tomato {i}: radius={radius:.3f}m outside [0.015, 0.075] — "
                     "sphere fit invalid, skipping."

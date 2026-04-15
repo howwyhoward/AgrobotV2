@@ -96,30 +96,31 @@ def clip_points_to_bbox(
 
 def filter_cluster_by_depth(
     points: np.ndarray,
-    percentile_lo: float = 5.0,
-    percentile_hi: float = 60.0,
+    depth_window_m: float = 0.10,
 ) -> np.ndarray:
-    """Remove background depth points from a bbox cluster before sphere fitting.
+    """Remove background points from a bbox cluster before sphere fitting.
 
-    At close range (<0.6 m) the bbox clip includes wall/surface points behind the
-    tomato. These inflate the fitted sphere radius because the algebraic solver
-    must find a sphere that encompasses both the tomato surface and distant background.
+    The tomato is always the nearest surface inside its detection bbox. Background
+    (wall, shelf, leaves behind the tomato) sits at a higher Z. We keep only points
+    within depth_window_m of the cluster's minimum Z — that window spans the full
+    visible arc of a tomato (diameter ≤ 15 cm) while cutting the background tail.
 
-    We keep only points whose Z depth falls within the [percentile_lo, percentile_hi]
-    percentile window of the cluster's Z distribution. The tomato surface occupies
-    the near (low-Z) portion; background clutter sits at higher Z values.
+    This is more robust than percentile filtering because it is invariant to the
+    fraction of background points in the cluster.
 
-    percentile_lo=5 discards noisy near-sensor outliers.
-    percentile_hi=60 cuts off the background tail while retaining the tomato arc.
+    Args:
+        points:         (N, 3) float32 cluster, already clipped to bbox.
+        depth_window_m: Max Z distance from the nearest point to keep (metres).
+                        0.10 m (10 cm) comfortably spans a tomato at any depth.
+
+    Returns:
+        Filtered (M, 3) array, or original if filter leaves fewer than 4 points.
     """
     if len(points) == 0:
         return points
-    z = points[:, 2]
-    z_lo = float(np.percentile(z, percentile_lo))
-    z_hi = float(np.percentile(z, percentile_hi))
-    mask = (z >= z_lo) & (z <= z_hi)
+    z_min = float(points[:, 2].min())
+    mask = points[:, 2] <= z_min + depth_window_m
     filtered = points[mask]
-    # Fall back to the full cluster if filtering removes too many points.
     return filtered if len(filtered) >= 4 else points
 
 
