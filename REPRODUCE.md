@@ -377,7 +377,10 @@ python3 perception/tools/build_val_gt_csv.py \
 | S4.10 | dino_weight=0.7, conf=0.30, pts=24 | <0.360 | — | — | — |
 | **S4.12** | **dino_weight=0.7, conf=0.35, pts=28, max=30** | **0.377** | **0.64** | **0.62** | **19081** |
 | S4.13 | pts=32, max=35 (recall-chasing) | 0.378 | 0.61 | 0.67 | 21883 |
-| E6 | + LoRA DINOv2 rank=8, lora_blocks=4 | TBD | — | — | — |
+| E6-base | LoRA DINOv2 rank=8, same conf=0.35 | 0.035 | 0.744 | 0.045 | 17887 |
+| E6-T1 | E6 + conf=0.10, neg=1.0 | TBD | — | — | — |
+| E6-T2 | E6 + conf=0.10, neg=0.5 | TBD | — | — | — |
+| E6-T3 | E6 + conf=0.15, neg=0.5 | TBD | — | — | — |
 
 ### Key insight (S3.4)
 

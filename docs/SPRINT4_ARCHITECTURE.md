@@ -345,7 +345,8 @@ combined with LoRA-improved precision.
 | pts=24, max=30 | More proposals | 0.328 | +14% |
 | Score fusion | α=0.7, conf=0.35 | 0.360 | +10% |
 | pts=28 | 784 proposals (28×28 grid) | **0.377** | +5% |
-| E6 LoRA | DINOv2 adapters, NT-Xent loss | TBD | expected +5–10% |
+| E6 LoRA (conf=0.35) | DINOv2 adapters, NT-Xent loss — uncalibrated | 0.035 | prec=0.744 but recall=0.045 — threshold needs re-calibration |
+| E6 calibrated | conf=0.10–0.15, neg=0.5 (sweep in progress) | TBD | — |
 
 The steep early gains fixed fundamental mismatches. Later gains show diminishing
 returns from proposal density — the ceiling is now feature discriminability, which
