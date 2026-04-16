@@ -21,14 +21,20 @@ of persistent tracks across frames so that:
      That track is then suppressed from /agrobot/tomato_tracks so Qwen-VL and
      the planner don't re-select an empty location on the next cycle.
 
-Algorithm (nearest-neighbour in 3D):
-  For each new detection centroid:
-    Find closest persistent track within match_threshold_m (default 8 cm).
-    If match found:  update track centroid via EMA, reset missed counter.
-    If no match:     create new track with next available persistent_id.
-  For each track not matched this frame:
-    Increment missed_frames.
-    If missed_frames > max_missed_frames: drop the track.
+Algorithm (Hungarian bipartite matching in 3D):
+  Build cost matrix C[i][j] = Euclidean distance between track i and detection j.
+  Set C[i][j] = INF (1e9) when distance exceeds match_threshold_m — these pairs
+  are forbidden, equivalent to edge pre-filtering in bipartite matching literature.
+  Run scipy.optimize.linear_sum_assignment(C) to find the globally optimal
+  one-to-one assignment minimising total cost (O(n³), trivial for n < 15).
+  Accept matched pair (i, j) only if C[i][j] < threshold (rejects INF pairs).
+  Unmatched detections → new tracks. Unmatched tracks → increment missed counter.
+
+  Why Hungarian over greedy nearest-neighbour:
+  Greedy is order-dependent — it claims the locally best match first, which
+  can steal a track from a better global assignment. Hungarian is optimal:
+  it minimises the sum of all matched distances simultaneously, preventing
+  ID-swaps when tomatoes are close together (e.g. 5+ tomatoes on a vine).
 
 Data Flow
 ---------
@@ -70,6 +76,9 @@ from __future__ import annotations
 
 import json
 import math
+
+import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 import rclpy
 from rclpy.node import Node
@@ -225,31 +234,46 @@ class TomatoTrackerNode(Node):
 
         self._frame += 1
 
-        # ── Step 1: match new detections to existing tracks ────────────────
-        # Greedy nearest-neighbour: sort by detection order, match closest track.
+        # ── Step 1: Hungarian bipartite matching ───────────────────────────
+        # Only consider non-picked active tracks as candidates.
+        active_tracks = [
+            (pid, t) for pid, t in self._tracks.items()
+            if pid not in self._picked_ids
+        ]
+        n_tracks = len(active_tracks)
+        n_dets = len(tomatoes)
+
         matched_track_ids: set[int] = set()
+        matched_det_indices: set[int] = set()
 
-        for tomato in tomatoes:
-            c = tomato["centroid"]
-            best_pid: int | None = None
-            best_dist = float("inf")
+        if n_tracks > 0 and n_dets > 0:
+            # Build cost matrix C[i][j] = 3D distance(track_i, detection_j).
+            # Pairs beyond match_threshold_m are set to INF — the Hungarian
+            # solver will only assign them if no feasible alternative exists,
+            # and we reject any such pair in the post-filter below.
+            _INF = 1e9
+            C = np.full((n_tracks, n_dets), fill_value=_INF)
+            for i, (pid, track) in enumerate(active_tracks):
+                for j, tomato in enumerate(tomatoes):
+                    d = _euclidean(track.centroid, tomato["centroid"])
+                    if d < self._threshold:
+                        C[i, j] = d
 
-            for pid, track in self._tracks.items():
-                if pid in matched_track_ids:
-                    continue  # already claimed this frame
-                if pid in self._picked_ids:
+            # scipy.optimize.linear_sum_assignment: O(n³), globally optimal.
+            row_ind, col_ind = linear_sum_assignment(C)
+
+            for i, j in zip(row_ind, col_ind):
+                if C[i, j] >= self._threshold:
+                    # INF pair — both track and detection remain unmatched.
                     continue
-                dist = _euclidean(c, track.centroid)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_pid = pid
+                pid, track = active_tracks[i]
+                track.update(tomatoes[j])
+                matched_track_ids.add(pid)
+                matched_det_indices.add(j)
 
-            if best_pid is not None and best_dist < self._threshold:
-                # Update existing track
-                self._tracks[best_pid].update(tomato)
-                matched_track_ids.add(best_pid)
-            else:
-                # New tomato — no close existing track
+        # Unmatched detections → new tracks.
+        for j, tomato in enumerate(tomatoes):
+            if j not in matched_det_indices:
                 new_pid = self._next_id
                 self._next_id += 1
                 self._tracks[new_pid] = Track(new_pid, tomato, self._alpha)
