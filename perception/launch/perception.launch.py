@@ -201,6 +201,26 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # ── Qwen-VL Pick Policy Args ───────────────────────────────────────────────
+    pick_policy_arg = DeclareLaunchArgument(
+        "pick_policy",
+        default_value="ripe_first",
+        description=(
+            "VLM pick policy: ripe_first | closest_first | largest_first. "
+            "ripe_first: prefers red/ripe tomatoes. "
+            "closest_first: picks min-z (nearest to camera). "
+            "largest_first: picks largest by radius."
+        ),
+    )
+    qwen_model_arg = DeclareLaunchArgument(
+        "qwen_model_path",
+        default_value="Qwen/Qwen2.5-VL-3B-Instruct",
+        description=(
+            "HuggingFace model ID or local path. "
+            "Set to models/qwen_vl/ after first download to avoid re-fetching."
+        ),
+    )
+
     # ── Tomato Tracker Node (NODE 2b) ──────────────────────────────────────────
     # Consumes /agrobot/tomato_spatial, assigns persistent IDs across frames,
     # EMA-smooths centroids, and publishes /agrobot/tomato_tracks.
@@ -222,6 +242,32 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # ── Qwen-VL Node (NODE 3) ──────────────────────────────────────────────────
+    # Subscribes to /agrobot/tomato_tracks. Loads Qwen2.5-VL-3B in a background
+    # thread (~30s). Until the model is ready it logs a warning and does nothing.
+    # Falls back to heuristic (closest tomato) if transformers is not installed.
+    qwen_vl_node = Node(
+        package="agrobot_perception",
+        executable="qwen_vl",
+        name="qwen_vl",
+        namespace="agrobot",
+        output="screen",
+        additional_env={
+            "AGROBOT_FORCE_CPU": "1",
+            "HIP_VISIBLE_DEVICES": "-1",
+            "ROCR_VISIBLE_DEVICES": "-1",
+        },
+        parameters=[
+            {
+                "model_path": LaunchConfiguration("qwen_model_path"),
+                "pick_policy": LaunchConfiguration("pick_policy"),
+                "tracks_topic": "/agrobot/tomato_tracks",
+                "min_smoothed_age": 3,
+                "max_new_tokens": 64,
+            }
+        ],
+    )
+
     return LaunchDescription(
         [
             camera_topic_arg,
@@ -239,8 +285,11 @@ def generate_launch_description() -> LaunchDescription:
             neg_emb_arg,
             sam2_ckpt_arg,
             publish_debug_arg,
+            pick_policy_arg,
+            qwen_model_arg,
             tomato_detector_node,
             tomato_spatial_node,
             tomato_tracker_node,
+            qwen_vl_node,
         ]
     )

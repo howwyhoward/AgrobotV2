@@ -31,6 +31,7 @@ setup(
             "tomato_detector = agrobot_perception.tomato_detector_node:main",
             "tomato_spatial = agrobot_perception.tomato_spatial_node:main",
             "tomato_tracker = agrobot_perception.tomato_tracker_node:main",
+            "qwen_vl = agrobot_perception.qwen_vl_node:main",
         ],
     },
 )
