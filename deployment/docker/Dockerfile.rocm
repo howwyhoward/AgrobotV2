@@ -95,6 +95,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python3-pip \
     python3-dev \
     git \
+    tmux \
+    htop \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 # ─── Stage 2: Python + PyTorch ROCm ──────────────────────────────────────────
