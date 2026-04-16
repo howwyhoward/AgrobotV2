@@ -126,7 +126,15 @@ def inject_lora(model: nn.Module, rank: int, lora_blocks: int) -> nn.Module:
     DINOv2 ViT-B has 12 transformer blocks. We adapt only the last N because
     those encode the most task-specific high-level semantics; early blocks
     encode low-level structure that is universal across tasks.
+
+    Critical: freeze ALL backbone parameters first so only the newly created
+    lora_A and lora_B tensors (which default to requires_grad=True) are trained.
+    Without this, every parameter that was already requires_grad=True (the full
+    86M backbone) gets passed to the optimizer — full fine-tuning, not LoRA.
     """
+    for p in model.parameters():
+        p.requires_grad_(False)
+
     # DINOv2 stores blocks at model.blocks (a ModuleList of TransformerBlock)
     blocks = list(model.blocks)
     target_blocks = blocks[-lora_blocks:]
