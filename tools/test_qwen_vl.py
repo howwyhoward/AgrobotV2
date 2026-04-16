@@ -49,8 +49,8 @@ _SINGLE_TEMPLATE = (
 )
 
 _MULTI_FOOTER = (
-    "\nReply with ONLY the tomato number to pick (e.g. \"0\" or \"1\").\n"
-    "Do not explain. Just the number."
+    "\nFirst explain your reasoning in one sentence, "
+    "then on a new line reply with ONLY the tomato number.\n"
 )
 
 
@@ -176,10 +176,15 @@ def run_inference(
 
 
 def parse_pick(response: str, crops: list[dict]) -> dict | None:
-    """Extract tomato_id from VLM response."""
+    """Extract tomato_id from VLM response.
+
+    With reasoning-first format the model outputs a sentence then a bare number
+    on a new line. Reading nums in reverse finds the answer line before any
+    digits that appeared in the reasoning sentence (e.g. "Tomato 1 is closer").
+    """
     nums = re.findall(r"\b(\d+)\b", response)
-    if nums:
-        tid = int(nums[0])
+    for candidate in reversed(nums):
+        tid = int(candidate)
         for c in crops:
             if c["tomato_id"] == tid:
                 return c

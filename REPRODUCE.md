@@ -2,11 +2,11 @@
 
 ---
 
-## Live ROS 2 pipeline — NucBox [4 terminals]
+## Live ROS 2 pipeline — NucBox
 
-Open four separate terminal windows on the NucBox. Run them in order.
+Five terminal windows. Run in order. Each terminal enters the same running container.
 
-### Terminal 1 — Camera
+### Terminal 1 — Camera [start new container here]
 ```bash
 ./deployment/docker/run_rocm.sh bash
 
@@ -20,24 +20,23 @@ ros2 launch realsense2_camera rs_launch.py \
   depth_module.depth_profile:=640x480x30
 ```
 
-Wait for `RealSense Node Is Up!` before starting Terminal 2.
+Wait for `RealSense Node Is Up!` before continuing.
 
-**Fallback (USB 2, or driver rejects 30 FPS):** drop the two `*_profile` lines — driver defaults to ~15 FPS:
-
+**Fallback (USB 2 or driver rejects 30 FPS):**
 ```bash
 ros2 launch realsense2_camera rs_launch.py \
   align_depth.enable:=true \
   pointcloud.enable:=true
 ```
 
-**Note:** Higher camera FPS does **not** speed up the detector (~15–20 s/frame on CPU); it only makes `/camera/...` topics smoother for debugging and other nodes.
+> Higher camera FPS does **not** speed up the detector (~17s/frame on CPU). It only
+> makes `/camera/...` topics smoother for debugging.
 
-If a profile fails, list supported modes after the camera is running: `ros2 param describe /camera/camera rgb_camera.color_profile`.
+---
 
 ### Terminal 2 — Detector (NODE 1)
 ```bash
 docker exec -it $(docker ps -q) bash
-
 source /opt/ros/jazzy/setup.bash
 colcon build --packages-select agrobot_perception --symlink-install
 source /workspace/install/setup.bash
@@ -48,127 +47,155 @@ ros2 launch agrobot_perception perception.launch.py \
   depth_camera_info_topic:=/camera/camera/depth/camera_info
 ```
 
-Wait for `TomatoDetectorNode initialized` before proceeding.
+Wait for `TomatoDetectorNode initialized`.
 
 > `AGROBOT_FORCE_CPU=1`, `HIP_VISIBLE_DEVICES=-1`, `ROCR_VISIBLE_DEVICES=-1` are baked
-> into the launch file via `additional_env` — no need to export them manually.
+> into the launch file — no need to export them manually.
 >
-> `colcon build` only needed once per container session (or after code changes).
-> Do NOT set `PYTHONPATH` — it breaks `ros2`.
+> `colcon build` only needed once per session (or after code changes). Do NOT set
+> `PYTHONPATH` — it breaks `ros2`.
+
+---
 
 ### Terminal 3 — Spatial Node (NODE 2)
 ```bash
 docker exec -it $(docker ps -q) bash
-
-source /opt/ros/jazzy/setup.bash
-source /workspace/install/setup.bash
+source /opt/ros/jazzy/setup.bash && source /workspace/install/setup.bash
 export ROS_DOMAIN_ID=42
 
 ros2 run agrobot_perception tomato_spatial
 ```
 
-Wait for both of these log lines before proceeding:
+Wait for:
 ```
-[INFO] [tomato_spatial]: TomatoSpatialNode initialized. detections='/agrobot/detections' pointcloud='/camera/camera/depth/color/points'
 [INFO] [tomato_spatial]: Camera intrinsics cached: fx=... fy=... cx=... cy=... res=640×480
 ```
 
-Then when the detector fires (~every 17s) you will see:
+Then every ~17s when the detector fires:
 ```
 [INFO] [tomato_spatial]: Published 2/2 tomato spatial estimates.
 ```
 
-> The spatial node subscribes to `/agrobot/detections` (from NODE 1), the point cloud,
-> and the color image. It fits a sphere to the point cloud cluster inside each bbox
-> and publishes 3D centroid + radius + JPEG crop for each tomato.
+---
 
-### Terminal 4 — Verify
+### Terminal 4 — Tracker (NODE 2b)
 ```bash
 docker exec -it $(docker ps -q) bash
-
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/jazzy/setup.bash && source /workspace/install/setup.bash
 export ROS_DOMAIN_ID=42
 
-# Camera: expect ~8–15 Hz with color+depth+pointcloud on USB 3
+ros2 run agrobot_perception tomato_tracker
+```
+
+Wait for:
+```
+[INFO] [tomato_tracker]: TomatoTrackerNode initialized. threshold=8cm max_missed=3 alpha=0.4
+```
+
+Then after 3 frames (`age≥3`, `smoothed=True`):
+```
+[INFO] [tomato_tracker]: Frame 3: 2 active tracks [0, 1] (registry size=2).
+```
+
+---
+
+### Terminal 5 — Qwen-VL Pick Selection (NODE 3)
+
+> **First run only:** install deps and pre-download model (~6GB, ~15 min).
+> ```bash
+> pip install transformers qwen-vl-utils Pillow --break-system-packages
+> ```
+
+```bash
+docker exec -it $(docker ps -q) bash
+source /opt/ros/jazzy/setup.bash && source /workspace/install/setup.bash
+export ROS_DOMAIN_ID=42
+
+ros2 run agrobot_perception qwen_vl
+```
+
+Model loads in background (~30s). Once ready:
+```
+[INFO] [qwen_vl]: Qwen2.5-VL loaded. VLM-guided pick selection active.
+```
+
+Then when tracker publishes smoothed tracks (age≥3):
+```
+[INFO] [qwen_vl]: VLM response: 'Tomato 0 is closer and appears ripe.\n0'
+[INFO] [qwen_vl]: Published pick_target: persistent_id=0 x=-0.062 y=+0.012 z=0.382m
+```
+
+---
+
+### Terminal 6 — Verify
+```bash
+docker exec -it $(docker ps -q) bash
+source /opt/ros/jazzy/setup.bash && source /workspace/install/setup.bash
+export ROS_DOMAIN_ID=42
+
+# Camera rate
 ros2 topic hz /camera/camera/color/image_raw
 
-# Detections every ~17s (SAM2+DINOv2 CPU inference time)
+# 2D detections (every ~17s)
 ros2 topic echo /agrobot/detections
 
-# Arm gate signal
+# Arm gate
 ros2 topic echo /agrobot/safe_to_pick
 
-# Sphere-fit 3D localization (NODE 2) — pretty-print both tomatoes
-cat > /tmp/show_spatial.py << 'EOF'
+# Tracked tomatoes with persistent IDs (pretty-print)
+cat > /tmp/show_tracks.py << 'EOF'
 import sys, json
 raw = sys.stdin.read()
-start = raw.index('[')
-end = raw.rindex(']') + 1
-for t in json.loads(raw[start:end]):
-    print(f"\n--- Tomato {t['tomato_id']} ---")
+data = json.loads(raw[raw.index('['):raw.rindex(']')+1])
+for t in data:
+    print(f"\n--- persistent_id={t['persistent_id']} age={t['age']} smoothed={t['smoothed']} ---")
     print(f"  centroid : x={t['centroid']['x']:+.3f}  y={t['centroid']['y']:+.3f}  z={t['centroid']['z']:.3f} m")
     print(f"  radius   : {t['sphere']['radius']*100:.1f} cm")
-    print(f"  size     : {t['sphere']['width']*100:.1f} w x {t['sphere']['height']*100:.1f} h x {t['sphere']['depth']*100:.1f} d cm")
     print(f"  score    : {t['confidence']:.3f}")
-    print(f"  has_jpeg : {'yes' if t['clipped_image'] else 'no'}")
 EOF
+ros2 topic echo --full-length /agrobot/tomato_tracks --once | python3 /tmp/show_tracks.py
 
-ros2 topic echo --full-length /agrobot/tomato_spatial --once | python3 /tmp/show_spatial.py
+# VLM pick target (geometry_msgs/PoseStamped → Dani's arm planner)
+ros2 topic echo /agrobot/pick_target --once
+
+# VLM reasoning text
+ros2 topic echo /agrobot/vlm_reasoning --once
 ```
 
-### Terminal 5 — Save JPEG crops to disk (optional, for Mac visualization)
-```bash
-# On NucBox host first: git pull (gets tools/save_spatial_crops.py)
-# Then enter container:
-docker exec -it $(docker ps -q) bash
+---
 
-source /opt/ros/jazzy/setup.bash
-source /workspace/install/setup.bash
-export ROS_DOMAIN_ID=42
-
-python3 tools/save_spatial_crops.py
+### Expected output — full pipeline (2 tomatoes in scene)
 ```
-
-Each time the detector fires, JPEGs are saved to `eval_reports/spatial_crops/` with filenames encoding depth, radius, and score:
-```
-20260408_143022_f0001_t0_z0.38m_r4.9cm_s0.60.jpg
-20260408_143022_f0001_t1_z0.64m_r3.5cm_s0.48.jpg
-```
-
-**Pull to Mac over Tailscale (run from Mac terminal):**
-```bash
-bash tools/pull_crops.sh
-# Finder opens automatically to eval_reports/spatial_crops/
-```
-
-### Expected output per processed frame (2 tomatoes in scene)
-```
-# /agrobot/detections
-detections:
-  - bbox: center=(cx,cy) size=(w,h)  score: 0.6–0.9  label: tomato
-  - bbox: center=(cx,cy) size=(w,h)  score: 0.6–0.9  label: tomato
-
-# /agrobot/safe_to_pick
-data: True
-
-# /agrobot/tomato_spatial (Terminal 4 pretty-print)
---- Tomato 0 ---
-  centroid : x=-0.062  y=+0.012  z=0.382 m
-  radius   : 4.9 cm
-  size     : 6.7 w x 4.3 h x 6.7 d cm
-  score    : 0.597
-  has_jpeg : yes
-
---- Tomato 1 ---
-  centroid : x=+0.309  y=+0.003  z=0.642 m
-  radius   : 3.5 cm
-  size     : 2.6 w x 6.3 h x 3.9 d cm
-  score    : 0.480
-  has_jpeg : yes
-
-# Spatial node log (Terminal 3)
+# Terminal 3 — spatial
 [INFO] [tomato_spatial]: Published 2/2 tomato spatial estimates.
+
+# Terminal 4 — tracker (frame 3+)
+[INFO] [tomato_tracker]: Frame 3: 2 active tracks [0, 1] (registry size=2).
+
+# Terminal 5 — qwen_vl
+[INFO] [qwen_vl]: VLM response: 'Tomato 0 is closer and appears ripe.\n0'
+[INFO] [qwen_vl]: Published pick_target: persistent_id=0 x=-0.062 y=+0.012 z=0.382m
+
+# Terminal 6 — /agrobot/pick_target
+header:
+  frame_id: camera_color_optical_frame
+pose:
+  position: {x: -0.062, y: 0.012, z: 0.382}
+  orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
 ```
+
+---
+
+### Optional — Save JPEG crops + pull to Mac
+```bash
+# Terminal 7 (NucBox container): save crops every detector cycle
+python3 tools/save_spatial_crops.py
+
+# Mac terminal: pull over Tailscale → opens Finder
+bash tools/pull_crops.sh
+```
+
+---
 
 ### Known warnings (all safe to ignore)
 | Warning | Cause |
@@ -176,14 +203,33 @@ data: True
 | `xFormers is not available` | Optional attention library, no impact |
 | `/opt/amdgpu/share/libdrm/amdgpu.ids: No such file or directory` | ROCm driver gap, CPU fallback active |
 | `cannot import name '_C' from 'sam2'` | SAM2 C++ extension skipped, results unaffected |
-| `Device connected using a 2.1 port. Reduced performance expected.` | Plug into USB 3 port for full 30fps |
-| `get_xu(ctrl=1) failed! Device or resource busy` | IMU bandwidth issue on USB 2.1, IMU unused |
+| `Device connected using a 2.1 port.` | Plug into USB 3 for full 30 FPS |
+| `get_xu(ctrl=1) failed!` | IMU issue on USB 2.1, IMU unused |
+| `generation flags are not valid` | Harmless transformers version warning |
+
+---
+
+## VLM smoke-test on Mac (no ROS needed)
+
+```bash
+# Activate venv and install deps (one time)
+python3 -m venv .venv && source .venv/bin/activate
+pip install torch torchvision transformers qwen-vl-utils Pillow
+
+# Dry run — instant, no model download
+python3 tools/test_qwen_vl.py --dry-run
+
+# Real inference on MPS (~30s after first download)
+python3 tools/test_qwen_vl.py
+python3 tools/test_qwen_vl.py --policy closest_first
+python3 tools/test_qwen_vl.py --policy largest_first
+```
 
 ---
 
 ## Quick start (eval only, no camera)
 
-## Current best (mAP 0.377 — Sprint 4, S4.12)
+### Current best (mAP 0.377 — Sprint 4, S4.12)
 
 ```bash
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
@@ -204,11 +250,10 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
 
 **Result:** mAP=0.377 | Precision=0.640 | Recall=0.616 | ~19 s/frame (CPU)
 
-**Requirements:** `query_embedding_k4.pt`, `negative_embedding.pt`, `sam2_tomato_finetuned.pt` (point-prompt version, Sprint 4).
+View report: `cd eval_reports/s4_final && python3 -m http.server 8000` → http://localhost:8000
 
-View report: `cd eval_reports/s4_final && python3 -m http.server 8000` → http://localhost:8000 (GT=green, TP=cyan, FP=red)
-
-> **NucBox:** `AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES=""` required (ROCm blocked on gfx1151). See [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md).
+> **NucBox:** `AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES=""` required (ROCm blocked on gfx1151).
+> See [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md).
 
 ---
 
@@ -220,7 +265,20 @@ View report: `cd eval_reports/s4_final && python3 -m http.server 8000` → http:
 | SAM2.1 hiera-small | `models/sam2/sam2.1_hiera_small.pt` | [Download](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt) |
 | Query embedding (k=4) | `models/query_embedding_k4.pt` | `build_query_embedding.py --num-prototypes 4` |
 | Negative embedding | `models/negative_embedding.pt` | `build_query_embedding.py --output-negative` |
-| Fine-tuned SAM2 (point prompts) | `models/sam2/sam2_tomato_finetuned.pt` | `finetune_sam2_polygon.py` (Sprint 4 version) |
+| SAM2 fine-tuned (point prompts) | `models/sam2/sam2_tomato_finetuned.pt` | `finetune_sam2_polygon.py` |
+| Qwen2.5-VL-3B | `~/.cache/huggingface/` or `models/qwen_vl/` | Auto-downloaded on first `ros2 run agrobot_perception qwen_vl` |
+
+**Save Qwen-VL locally after first download (avoids re-fetching):**
+```bash
+python3 -c "
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+m = Qwen2_5_VLForConditionalGeneration.from_pretrained('Qwen/Qwen2.5-VL-3B-Instruct')
+m.save_pretrained('models/qwen_vl/')
+AutoProcessor.from_pretrained('Qwen/Qwen2.5-VL-3B-Instruct').save_pretrained('models/qwen_vl/')
+print('Saved to models/qwen_vl/')
+"
+# Then launch with: qwen_model_path:=models/qwen_vl/
+```
 
 ---
 
@@ -245,7 +303,7 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --num-prototypes 4 \
   --output-negative models/negative_embedding.pt
 
-# Step 3 — Mine hard negatives under the k=4 query (~25 min)
+# Step 3 — Mine hard negatives (~25 min)
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   python3 perception/tools/mine_hard_negatives.py \
   --val-list data/val_list.txt --gt-csv data/val_gt.csv \
@@ -254,7 +312,6 @@ AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   --amg-points 20 --confidence 0.2 --negative-weight 0.0 --nms-iou 0.5
 
 # Step 4 (E6) — LoRA DINOv2 fine-tune on Mac MPS (~2-4 h for 643 images, 10 epochs)
-# No AGROBOT_FORCE_CPU → auto-selects MPS on Apple Silicon
 PYTHONPATH=perception \
   python3 perception/tools/finetune_dino_lora.py \
   --train-images data/Laboro-Tomato/train/images \
@@ -272,17 +329,12 @@ PYTHONPATH=perception \
   --output-negative models/negative_embedding_lora.pt \
   --dino-lora-path models/dino_lora.pt
 
-# Step 6 (E6) — Eval with LoRA to measure mAP delta (run on NucBox)
+# Step 6 (E6) — Eval with LoRA (run on NucBox)
 AGROBOT_FORCE_CPU=1 HIP_VISIBLE_DEVICES="" PYTHONPATH=perception \
   python3 perception/eval/run_eval.py \
-  --val-list data/val_list.txt \
-  --gt-csv data/val_gt.csv \
-  --detector sam2_amg \
-  --amg-points 28 \
-  --max-detections 30 \
-  --confidence 0.35 \
-  --nms-iou 0.5 \
-  --dino-weight 0.7 \
+  --val-list data/val_list.txt --gt-csv data/val_gt.csv \
+  --detector sam2_amg --amg-points 28 --max-detections 30 \
+  --confidence 0.35 --nms-iou 0.5 --dino-weight 0.7 \
   --query-embedding models/query_embedding_lora_k4.pt \
   --negative-embedding models/negative_embedding_lora.pt \
   --negative-weight 1.0 \
@@ -324,14 +376,15 @@ python3 perception/tools/build_val_gt_csv.py \
 | S4.9 | dino_weight=0.7, conf=0.35, pts=24 | 0.360 | 0.68 | 0.56 | 13968 |
 | S4.10 | dino_weight=0.7, conf=0.30, pts=24 | <0.360 | — | — | — |
 | **S4.12** | **dino_weight=0.7, conf=0.35, pts=28, max=30** | **0.377** | **0.64** | **0.62** | **19081** |
-| E6 | + LoRA DINOv2 rank=8, lora_blocks=4 (steps 4-6 above) | TBD | — | — | — |
 | S4.13 | pts=32, max=35 (recall-chasing) | 0.378 | 0.61 | 0.67 | 21883 |
+| E6 | + LoRA DINOv2 rank=8, lora_blocks=4 | TBD | — | — | — |
 
 ### Key insight (S3.4)
 
-DINOv2 proposals snap to a 14px grid → coarse boxes → IoU < 0.5. Fix: **SAM2 AMG proposes, DINOv2 scores**. Architecture swap alone: mAP 0 → 0.022.
+DINOv2 proposals snap to a 14px grid → coarse boxes → IoU < 0.5.
+Fix: **SAM2 AMG proposes, DINOv2 scores**. Architecture swap alone: mAP 0 → 0.022.
 
-### Sprint 4 progression — what each change delivered
+### Sprint 4 progression
 
 | Step | Change | Cumulative mAP |
 |------|--------|----------------|
@@ -341,4 +394,5 @@ DINOv2 proposals snap to a 14px grid → coarse boxes → IoU < 0.5. Fix: **SAM2
 | Score fusion | dino_weight=0.7 + conf=0.35 | 0.360 |
 | pts=28 | 784 proposals, 18.5px grid spacing | **0.377 (+121% vs S3)** |
 
-**Next unlock:** E6 LoRA DINOv2 (needs ROCm gfx1151 fix). See [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md) and [docs/SPRINT4_ARCHITECTURE.md](docs/SPRINT4_ARCHITECTURE.md).
+**Next unlock:** E6 LoRA DINOv2 (ROCm gfx1151 still blocked — run on Mac MPS instead).
+See [docs/SPRINT3_ROCM_ISSUE.md](docs/SPRINT3_ROCM_ISSUE.md) and [docs/SPRINT4_ARCHITECTURE.md](docs/SPRINT4_ARCHITECTURE.md).
