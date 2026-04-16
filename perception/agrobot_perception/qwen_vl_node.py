@@ -216,8 +216,10 @@ class QwenVLNode(Node):
             self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 source,
                 # bfloat16 on CPU: 3B × 2 bytes ≈ 6GB RAM. Fits in 96GB NucBox.
+                # No device_map — avoids the accelerate dependency. Without it,
+                # transformers loads to CPU by default when no GPU is visible
+                # (AGROBOT_FORCE_CPU=1 ensures HIP/CUDA are hidden).
                 torch_dtype=torch.bfloat16,
-                device_map="cpu",
             )
             self._model.eval()
             self._vlm_available = True
