@@ -126,8 +126,8 @@ _MULTI_PROMPT_HEADER = (
 )
 
 _MULTI_PROMPT_FOOTER = (
-    "\nReply with ONLY the tomato number to pick (e.g. \"0\" or \"1\").\n"
-    "Do not explain. Just the number."
+    "\nFirst explain your reasoning in one sentence, "
+    "then on a new line reply with ONLY the tomato number.\n"
 )
 
 
